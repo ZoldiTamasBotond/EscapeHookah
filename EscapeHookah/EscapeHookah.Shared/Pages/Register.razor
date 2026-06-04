@@ -1,0 +1,491 @@
+﻿@page "/register"
+@using EscapeHookah.Shared.Services
+@using EscapeHookah.Shared.Models
+@using Microsoft.Extensions.Logging
+@inject IFormFactor FormFactor
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject IFirebaseAuthService FirebaseAuthService
+@inject ILogger<Register> Logger
+
+<PageTitle>EscapeHookah - Register</PageTitle>
+
+<!-- Link to shared CSS -->
+<link rel="stylesheet" href="app.css" />
+
+<div class="register-container">
+    <!-- Back to Login Link -->
+    <div class="back-to-login">
+        <a href="/login" class="back-link">
+            <span>←</span> Back to Login
+        </a>
+    </div>
+
+    <!-- Registration Card -->
+    <div class="register-card">
+        <div class="register-header">
+            <div class="register-icon">🌿</div>
+            <h1>Create Account</h1>
+            <p>Join the EscapeHookah community</p>
+        </div>
+
+        <!-- Loading Indicator -->
+        @if (isLoading)
+        {
+            <div class="loading-overlay">
+                <div class="spinner"></div>
+                <p>Creating your account...</p>
+            </div>
+        }
+
+        <!-- Registration Form -->
+        <div class="register-form">
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="error-message">
+                    ⚠️ @errorMessage
+                </div>
+            }
+
+            @if (showSuccess)
+            {
+                <div class="success-message">
+                    ✅ Registration successful! Redirecting to login...
+                </div>
+            }
+
+            <div class="form-group">
+                <label class="form-label" for="firstName">First Name *</label>
+                <input type="text"
+                       id="firstName"
+                       class="form-input"
+                       placeholder="John"
+                       @bind="firstName"
+                       @bind:event="oninput"
+                       disabled="@isLoading" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="lastName">Last Name *</label>
+                <input type="text"
+                       id="lastName"
+                       class="form-input"
+                       placeholder="Doe"
+                       @bind="lastName"
+                       @bind:event="oninput"
+                       disabled="@isLoading" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="username">Username *</label>
+                <input type="text"
+                       id="username"
+                       class="form-input"
+                       placeholder="johndoe123"
+                       @bind="username"
+                       @bind:event="oninput"
+                       disabled="@isLoading" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="email">Email *</label>
+                <input type="email"
+                       id="email"
+                       class="form-input"
+                       placeholder="john.doe@example.com"
+                       @bind="email"
+                       @bind:event="oninput"
+                       disabled="@isLoading" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="phone">
+                    Phone Number <span style="color: #38E019;">*</span>
+                </label>
+                <div class="input-wrapper">
+                    <span class="input-icon">📱</span>
+                    <input type="tel"
+                           id="phone"
+                           class="form-input"
+                           placeholder="+1 234 567 8900"
+                           @bind="phoneNumber"
+                           @bind:event="oninput"
+                           disabled="@isLoading" />
+                </div>
+            </div>
+
+            <!-- Date Picker with Dropdowns - Fixed binding -->
+            <div class="form-group">
+                <label class="form-label">Date of Birth *</label>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <select class="form-input"
+                            value="@selectedYear.ToString()"
+                            @onchange="OnYearChanged"
+                            style="flex: 2; min-width: 100px;"
+                            disabled="@isLoading">
+                        <option value="0">Year</option>
+                        @for (int y = DateTime.Today.Year - 100; y <= DateTime.Today.Year - 18; y++)
+                        {
+                            <option value="@y">@y</option>
+                        }
+                    </select>
+                    <select class="form-input"
+                            value="@selectedMonth.ToString()"
+                            @onchange="OnMonthChanged"
+                            style="flex: 1; min-width: 80px;"
+                            disabled="@isLoading">
+                        <option value="0">Month</option>
+                        @for (int m = 1; m <= 12; m++)
+                        {
+                            <option value="@m">@m</option>
+                        }
+                    </select>
+                    <select class="form-input"
+                            @bind="selectedDay"
+                            style="flex: 1; min-width: 80px;"
+                            disabled="@isLoading">
+                        <option value="0">Day</option>
+                        @foreach (var day in days)
+                        {
+                            <option value="@day">@day</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="gender">Gender *</label>
+                <select id="gender" class="form-input" @bind="gender" disabled="@isLoading">
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                    <option value="PreferNotToSay">Prefer not to say</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="password">Password *</label>
+                <div class="password-wrapper">
+                    <span class="input-icon">🔒</span>
+                    <input type="@(showPassword ? "text" : "password")"
+                           id="password"
+                           class="form-input"
+                           placeholder="Create a password"
+                           @bind="password"
+                           @bind:event="oninput"
+                           disabled="@isLoading" />
+                    <button type="button"
+                            class="toggle-password"
+                            @onclick="TogglePasswordVisibility"
+                            disabled="@isLoading">
+                        @(showPassword ? "👁️" : "👁️‍🗨️")
+                    </button>
+                </div>
+                <small style="color: #38E019; opacity: 0.7;">At least 8 characters</small>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="confirmPassword">Confirm Password *</label>
+                <div class="password-wrapper">
+                    <span class="input-icon">🔒</span>
+                    <input type="@(showConfirmPassword ? "text" : "password")"
+                           id="confirmPassword"
+                           class="form-input"
+                           placeholder="Confirm your password"
+                           @bind="confirmPassword"
+                           @bind:event="oninput"
+                           disabled="@isLoading" />
+                    <button type="button"
+                            class="toggle-password"
+                            @onclick="ToggleConfirmPasswordVisibility"
+                            disabled="@isLoading">
+                        @(showConfirmPassword ? "👁️" : "👁️‍🗨️")
+                    </button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="acceptTerms" disabled="@isLoading" />
+                    <span style="color: #38E019; margin-left: 8px;">I accept the Terms and Conditions *</span>
+                </label>
+            </div>
+
+            <button class="register-button" @onclick="HandleRegister" disabled="@isLoading">
+                @(isLoading ? "Creating Account..." : "Create Account")
+            </button>
+
+            <div class="login-section">
+                <span>Already have an account? </span>
+                <a href="/login">Sign In</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    // Form fields
+    private string firstName = "";
+    private string lastName = "";
+    private string username = "";
+    private string email = "";
+    private string phoneNumber = "";
+    private int selectedYear = 0;
+    private int selectedMonth = 0;
+    private int selectedDay = 0;
+    private DateTime? dateOfBirth = null;
+    private string gender = "";
+    private string password = "";
+    private string confirmPassword = "";
+    private bool acceptTerms = false;
+    private bool isLoading = false;
+    private bool showSuccess = false;
+    private string errorMessage = "";
+    private bool showPassword = false;
+    private bool showConfirmPassword = false;
+    private List<int> days = new List<int>();
+
+    private void TogglePasswordVisibility() => showPassword = !showPassword;
+    private void ToggleConfirmPasswordVisibility() => showConfirmPassword = !showConfirmPassword;
+
+    protected override void OnInitialized()
+    {
+        Logger.LogInformation("Register page initialized");
+        UpdateDays();
+    }
+
+    private async Task OnYearChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int year))
+        {
+            selectedYear = year;
+            await UpdateDaysAsync();
+        }
+        else
+        {
+            selectedYear = 0;
+            days.Clear();
+            selectedDay = 0;
+        }
+    }
+
+    private async Task OnMonthChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int month))
+        {
+            selectedMonth = month;
+            await UpdateDaysAsync();
+        }
+        else
+        {
+            selectedMonth = 0;
+            days.Clear();
+            selectedDay = 0;
+        }
+    }
+
+    private async Task UpdateDaysAsync()
+    {
+        days.Clear();
+        
+        if (selectedYear > 0 && selectedMonth > 0)
+        {
+            var daysInMonth = DateTime.DaysInMonth(selectedYear, selectedMonth);
+            for (int d = 1; d <= daysInMonth; d++)
+            {
+                days.Add(d);
+            }
+        }
+        
+        // Reset selected day if it's invalid for the new month/year
+        if (selectedDay > days.Count)
+        {
+            selectedDay = 0;
+        }
+        
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateDays()
+    {
+        days.Clear();
+        
+        if (selectedYear > 0 && selectedMonth > 0)
+        {
+            var daysInMonth = DateTime.DaysInMonth(selectedYear, selectedMonth);
+            for (int d = 1; d <= daysInMonth; d++)
+            {
+                days.Add(d);
+            }
+        }
+        
+        // Reset selected day if it's invalid for the new month/year
+        if (selectedDay > days.Count)
+        {
+            selectedDay = 0;
+        }
+    }
+
+    private void UpdateDateOfBirth()
+    {
+        if (selectedYear > 0 && selectedMonth > 0 && selectedDay > 0)
+        {
+            try
+            {
+                dateOfBirth = new DateTime(selectedYear, selectedMonth, selectedDay);
+                Logger.LogInformation("Date of birth set: {Date}", dateOfBirth.Value.ToString("yyyy-MM-dd"));
+            }
+            catch
+            {
+                dateOfBirth = null;
+            }
+        }
+        else
+        {
+            dateOfBirth = null;
+        }
+    }
+
+    private async Task HandleRegister()
+    {
+        // Clear previous errors
+        errorMessage = "";
+
+        // Update date of birth from selections
+        UpdateDateOfBirth();
+
+        // Validation
+        if (!ValidateForm())
+            return;
+
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            Logger.LogInformation("Attempting to register user: {Email}", email);
+            Logger.LogInformation("Date of birth: {Date}", dateOfBirth?.ToString("yyyy-MM-dd"));
+
+            var success = await FirebaseAuthService.RegisterUser(
+                email,
+                password,
+                firstName,
+                lastName,
+                username,
+                phoneNumber,
+                dateOfBirth,
+                gender
+            );
+
+            if (success)
+            {
+                Logger.LogInformation("Registration successful for: {Email}", email);
+                showSuccess = true;
+                await JSRuntime.InvokeVoidAsync("alert", "Registration successful! Welcome to EscapeHookah!");
+
+                // Redirect to login after 2 seconds
+                await Task.Delay(2000);
+                Navigation.NavigateTo("/login");
+            }
+            else
+            {
+                errorMessage = "Registration failed. Email might already be in use or network error.";
+                Logger.LogWarning("Registration failed for: {Email}", email);
+                isLoading = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Registration error for: {Email}", email);
+
+            if (ex.Message.Contains("Username already taken"))
+            {
+                errorMessage = "This username is already taken. Please choose another one.";
+            }
+            else if (ex.Message.Contains("already registered"))
+            {
+                errorMessage = "This email is already registered. Please use another email or login.";
+            }
+            else
+            {
+                errorMessage = $"Registration error: {ex.Message}";
+            }
+
+            isLoading = false;
+        }
+    }
+
+    private bool ValidateForm()
+    {
+        if (string.IsNullOrWhiteSpace(firstName))
+        {
+            errorMessage = "First name is required";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(lastName))
+        {
+            errorMessage = "Last name is required";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(username) || username.Length < 3)
+        {
+            errorMessage = "Username must be at least 3 characters";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains("@") || !email.Contains("."))
+        {
+            errorMessage = "Please enter a valid email address";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            errorMessage = "Phone number is required";
+            return false;
+        }
+
+        if (!dateOfBirth.HasValue)
+        {
+            errorMessage = "Please select your date of birth";
+            return false;
+        }
+
+        var age = DateTime.Today.Year - dateOfBirth.Value.Year;
+        if (dateOfBirth.Value.Date > DateTime.Today.AddYears(-age)) age--;
+        if (age < 18)
+        {
+            errorMessage = "You must be at least 18 years old to register";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(gender))
+        {
+            errorMessage = "Please select your gender";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 8)
+        {
+            errorMessage = "Password must be at least 8 characters";
+            return false;
+        }
+
+        if (password != confirmPassword)
+        {
+            errorMessage = "Passwords do not match";
+            return false;
+        }
+
+        if (!acceptTerms)
+        {
+            errorMessage = "You must accept the terms and conditions";
+            return false;
+        }
+
+        return true;
+    }
+}

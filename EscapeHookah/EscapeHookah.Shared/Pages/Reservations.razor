@@ -1,0 +1,404 @@
+﻿@page "/reservations"
+@using EscapeHookah.Shared.Services
+@using EscapeHookah.Shared.Models
+@using System.Timers
+@using System.Diagnostics
+@inject IFirebaseAuthService FirebaseAuthService
+@inject IReservationService ReservationService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<PageTitle>EscapeHookah - Reservations</PageTitle>
+
+<!-- Authentication Check -->
+@if (!FirebaseAuthService.IsAuthenticated)
+{
+    <div class="auth-required">
+        <div class="auth-card">
+            <div class="auth-icon">🔒</div>
+            <h2>Login Required</h2>
+            <p>Please log in to make a reservation</p>
+            <button class="cta-button" @onclick="GoToLogin">
+                Go to Login
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <!-- Main Content -->
+    <div class="reservations-container">
+        <!-- Header -->
+        <div class="reservations-header">
+            <h1>Make a Reservation</h1>
+            <p>Welcome back, @userName!</p>
+        </div>
+
+        <!-- Loading Indicator -->
+        @if (isLoading)
+        {
+            <div class="loading-overlay">
+                <div class="spinner"></div>
+                <p>Processing your reservation...</p>
+            </div>
+        }
+
+        <!-- Error Message -->
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="error-message">
+                ⚠️ @errorMessage
+            </div>
+        }
+
+        <!-- Success Message -->
+        @if (showSuccess)
+        {
+            <div class="success-message">
+                ✅ Reservation confirmed! Check your reservations below.
+            </div>
+        }
+
+        <!-- Reservation Form -->
+        <div class="reservation-form">
+            <h2>Select Table and Time</h2>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Select Date</label>
+                    <input type="date"
+                           class="form-input"
+                           @bind="selectedDate"
+                           @bind:format="yyyy-MM-dd"
+                           min="@DateTime.Today.ToString("yyyy-MM-dd")" />
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Number of Guests</label>
+                    <input type="number"
+                           class="form-input"
+                           @bind="numberOfGuests"
+                           min="1" max="8" />
+                </div>
+            </div>
+
+            <!-- Tables Grid -->
+            <h3>Available Tables for @selectedDate.ToString("MMMM dd, yyyy")</h3>
+            <div class="tables-grid">
+                @foreach (var table in tables)
+                {
+                    var isAvailable = IsTableAvailable(table);
+                    <div class="table-card @(selectedTable == table.TableNumber ? "selected" : "") @(isAvailable ? "available" : "unavailable")"
+                         @onclick="() => SelectTable(table.TableNumber)">
+                        <div class="table-number">Table @table.TableNumber</div>
+                        <div class="table-info">
+                            <div>👥 Capacity: @table.Capacity</div>
+                            <div>📍 @table.Location</div>
+                            <div class="table-status">
+                                @if (isAvailable)
+                                {
+                                    <span class="status-badge available">Available</span>
+                                }
+                                else
+                                {
+                                    <span class="status-badge unavailable">Booked</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- Time Selection -->
+            @if (selectedTable > 0)
+            {
+                <div class="time-selection">
+                    <h3>Select Time for Table @selectedTable</h3>
+
+                    <div class="time-slots">
+                        @foreach (var slot in GetAvailableTimeSlots(selectedTable))
+                        {
+                            <button class="time-slot @(selectedStartTime == slot.Start ? "selected" : "")"
+                                    @onclick="() => SelectTimeSlot(slot.Start, slot.End)">
+                                @slot.Display
+                            </button>
+                        }
+                    </div>
+
+                    @if (selectedStartTime != TimeSpan.Zero)
+                    {
+                        <div class="selected-time-info">
+                            Selected: @selectedStartTime.ToString(@"hh\:mm") - @selectedEndTime.ToString(@"hh\:mm")
+                        </div>
+                    }
+                </div>
+            }
+
+            <!-- Special Requests -->
+            @if (selectedTable > 0 && selectedStartTime != TimeSpan.Zero)
+            {
+                <div class="form-group">
+                    <label class="form-label">Special Requests (Optional)</label>
+                    <textarea class="form-input"
+                              @bind="specialRequests"
+                              rows="3"
+                              placeholder="Any special requests? (e.g., allergies, occasion, etc.)"></textarea>
+                </div>
+
+                <div class="reservation-summary">
+                    <h3>Reservation Summary</h3>
+                    <div class="summary-details">
+                        <p><strong>Table:</strong> @selectedTable</p>
+                        <p><strong>Date:</strong> @selectedDate.ToString("MMMM dd, yyyy")</p>
+                        <p><strong>Time:</strong> @selectedStartTime.ToString(@"hh\:mm") - @selectedEndTime.ToString(@"hh\:mm")</p>
+                        <p><strong>Guests:</strong> @numberOfGuests</p>
+                        @if (!string.IsNullOrEmpty(specialRequests))
+                        {
+                            <p><strong>Special Requests:</strong> @specialRequests</p>
+                        }
+                    </div>
+
+                    <button class="confirm-button" @onclick="ConfirmReservation">
+                        Confirm Reservation
+                    </button>
+                </div>
+            }
+        </div>
+
+        <!-- My Reservations -->
+        <div class="my-reservations">
+            <h2>My Reservations</h2>
+
+            @if (userReservations.Count == 0)
+            {
+                <p class="no-reservations">You don't have any reservations yet.</p>
+            }
+            else
+            {
+                <div class="reservations-list">
+                    @foreach (var reservation in userReservations)
+                    {
+                        <div class="reservation-item @reservation.Status.ToString().ToLower()">
+                            <div class="reservation-header">
+                                <span class="reservation-table">Table @reservation.TableNumber</span>
+                                <span class="reservation-status @reservation.Status.ToString().ToLower()">
+                                    @reservation.Status
+                                </span>
+                            </div>
+                            <div class="reservation-details">
+                                <p>📅 @reservation.ReservationDate.ToString("MMMM dd, yyyy")</p>
+                                <p>⏰ @reservation.StartTime.ToString(@"hh\:mm") - @reservation.EndTime.ToString(@"hh\:mm")</p>
+                                <p>👥 @reservation.NumberOfGuests guests</p>
+                                @if (!string.IsNullOrEmpty(reservation.SpecialRequests))
+                                {
+                                    <p class="special-requests">📝 @reservation.SpecialRequests</p>
+                                }
+                            </div>
+                            @if (reservation.Status == ReservationStatus.Confirmed && reservation.ReservationDate >= DateTime.Today)
+                            {
+                                <button class="cancel-button" @onclick="() => CancelReservation(reservation.Id)">
+                                    Cancel Reservation
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+@code {
+    private string userName = "";
+    private string userId = "";
+    private DateTime selectedDate = DateTime.Today;
+    private int numberOfGuests = 2;
+    private int selectedTable = 0;
+    private TimeSpan selectedStartTime = TimeSpan.Zero;
+    private TimeSpan selectedEndTime = TimeSpan.Zero;
+    private string specialRequests = "";
+    private bool isLoading = false;
+    private bool showSuccess = false;
+    private string errorMessage = "";
+
+    private List<Table> tables = new();
+    private List<Reservation> userReservations = new();
+
+    private class TimeSlot
+    {
+        public TimeSpan Start { get; set; }
+        public TimeSpan End { get; set; }
+        public string Display => $"{Start:hh\\:mm} - {End:hh\\:mm}";
+    }
+
+    private readonly List<TimeSlot> timeSlots = new()
+    {
+        new TimeSlot { Start = TimeSpan.FromHours(16), End = TimeSpan.FromHours(18) },
+        new TimeSlot { Start = TimeSpan.FromHours(18), End = TimeSpan.FromHours(20) },
+        new TimeSlot { Start = TimeSpan.FromHours(20), End = TimeSpan.FromHours(22) },
+        new TimeSlot { Start = TimeSpan.FromHours(22), End = TimeSpan.FromHours(24) }
+    };
+
+    private void GoToLogin()
+    {
+        Navigation.NavigateTo("/login");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!FirebaseAuthService.IsAuthenticated)
+            return;
+
+        userId = FirebaseAuthService.CurrentUserId;
+
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            errorMessage = "Authenticated user ID is missing.";
+            return;
+        }
+
+        await LoadUserData();
+        await LoadUserReservations();
+        tables = await ReservationService.GetTables();
+    }
+
+    private async Task LoadUserData()
+    {
+        try
+        {
+            var userProfile = await FirebaseAuthService.GetUserProfile(userId);
+
+            if (userProfile != null && userProfile.Count > 0)
+            {
+                if (userProfile.ContainsKey("UserName"))
+                    userName = userProfile["UserName"]?.ToString() ?? "User";
+                else
+                    userName = "User";
+            }
+            else
+            {
+                userName = "User";
+                Debug.WriteLine("No user profile found in database for UID: " + userId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Error loading user data: {ex.Message}");
+            userName = "User";
+        }
+    }
+
+    private async Task LoadUserReservations()
+    {
+        userReservations = await ReservationService.GetUserReservations(userId);
+        StateHasChanged();
+    }
+
+    private void SelectTable(int tableNumber)
+    {
+        selectedTable = tableNumber;
+        selectedStartTime = TimeSpan.Zero;
+        selectedEndTime = TimeSpan.Zero;
+    }
+
+    private void SelectTimeSlot(TimeSpan start, TimeSpan end)
+    {
+        selectedStartTime = start;
+        selectedEndTime = end;
+    }
+
+    private bool IsTableAvailable(Table table)
+    {
+        return true; // For demo purposes, you can implement actual availability check
+    }
+
+    private List<TimeSlot> GetAvailableTimeSlots(int tableNumber)
+    {
+        return timeSlots; // For demo purposes, return all slots
+    }
+
+    private async Task ConfirmReservation()
+    {
+        try
+        {
+            isLoading = true;
+            errorMessage = "";
+            showSuccess = false;
+            StateHasChanged();
+
+            userId = FirebaseAuthService.CurrentUserId;
+
+            if (string.IsNullOrWhiteSpace(userId))
+                throw new Exception("No authenticated user found.");
+
+            var reservation = new Reservation
+            {
+                UserId = userId,
+                UserName = userName,
+                TableNumber = selectedTable,
+                ReservationDate = selectedDate.Date,
+                StartTime = selectedStartTime,
+                EndTime = selectedEndTime,
+                NumberOfGuests = numberOfGuests,
+                SpecialRequests = specialRequests ?? string.Empty,
+                Status = ReservationStatus.Confirmed,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            var result = await ReservationService.CreateReservation(reservation);
+
+            if (result != null)
+            {
+                showSuccess = true;
+                await LoadUserReservations();
+
+                selectedTable = 0;
+                selectedStartTime = TimeSpan.Zero;
+                selectedEndTime = TimeSpan.Zero;
+                specialRequests = "";
+
+                await Task.Delay(3000);
+                showSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CancelReservation(string reservationId)
+    {
+        try
+        {
+            var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "Are you sure you want to cancel this reservation?");
+
+            if (confirmed)
+            {
+                isLoading = true;
+                errorMessage = "";
+                StateHasChanged();
+
+                var success = await ReservationService.CancelReservation(reservationId, userId);
+
+                if (success)
+                    await LoadUserReservations();
+                else
+                    errorMessage = "Could not cancel reservation.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error cancelling reservation: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+}

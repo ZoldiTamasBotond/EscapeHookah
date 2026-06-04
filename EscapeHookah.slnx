@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="EscapeHookah/EscapeHookah.Shared/EscapeHookah.Shared.csproj" />
+  <Project Path="EscapeHookah/EscapeHookah.Web/EscapeHookah.Web.csproj" />
+  <Project Path="EscapeHookah/EscapeHookah/EscapeHookah.csproj">
+    <Deploy Solution="Debug|*" />
+  </Project>
+</Solution>

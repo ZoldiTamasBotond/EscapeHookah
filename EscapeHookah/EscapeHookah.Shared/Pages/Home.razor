@@ -1,0 +1,76 @@
+﻿@page "/"
+@using EscapeHookah.Shared.Services
+
+<PageTitle>EscapeHookah - Home</PageTitle>
+
+<!-- Link to shared CSS -->
+<link rel="stylesheet" href="app.css" />
+
+<div class="home-container">
+    <!-- Header Section -->
+    <div class="header">
+        <h1>EscapeHookah</h1>
+        <div class="subtitle">Experience the Ultimate Relaxation</div>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="info-grid">
+        <div class="info-card">
+            <div class="card-icon">🌿</div>
+            <h3>Premium Quality</h3>
+            <p>Experience the finest selection of hookah flavors and accessories</p>
+        </div>
+        <div class="info-card">
+            <div class="card-icon">🌟</div>
+            <h3>Expert Service</h3>
+            <p>Professional staff ensuring your perfect hookah experience</p>
+        </div>
+        <div class="info-card">
+            <div class="card-icon">✨</div>
+            <h3>Unique Atmosphere</h3>
+            <p>Immerse yourself in our carefully crafted environment</p>
+        </div>
+    </div>
+
+    <!-- Features Section -->
+    <div class="features">
+        <div class="feature">
+            <div class="feature-number">01</div>
+            <h4>Wide Selection</h4>
+            <p>Over 50 premium flavors to choose from</p>
+        </div>
+        <div class="feature">
+            <div class="feature-number">02</div>
+            <h4>Cozy Lounge</h4>
+            <p>Relax in our comfortable, modern setting</p>
+        </div>
+        <div class="feature">
+            <div class="feature-number">03</div>
+            <h4>Events & Nights</h4>
+            <p>Regular themed nights and special events</p>
+        </div>
+    </div>
+
+    <!-- Call to Action -->
+    <div class="button-container">
+        <button class="cta-button" @onclick="() => ShowWelcomeMessage()">
+            Book Your Session
+        </button>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <p>© 2024 EscapeHookah - All rights reserved</p>
+        <p style="margin-top: 0.5rem; font-size: 0.8rem;">Experience the difference</p>
+    </div>
+</div>
+
+@code {
+    private async Task ShowWelcomeMessage()
+    {
+        await JSRuntime.InvokeVoidAsync("alert", "Welcome to EscapeHookah!");
+    }
+
+    [Inject]
+    private IJSRuntime JSRuntime { get; set; } = default!;
+}
