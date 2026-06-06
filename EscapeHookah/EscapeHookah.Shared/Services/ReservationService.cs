@@ -14,6 +14,7 @@ namespace EscapeHookah.Shared.Services
         private readonly FirebaseClient _databaseClient;
         private readonly IFirebaseAuthService _firebaseAuthService;
         private readonly List<Table> _tables;
+        private readonly TimeSpan _holdDuration = TimeSpan.FromMinutes(15);
 
         public ReservationService(IFirebaseAuthService firebaseAuthService)
         {
@@ -48,25 +49,18 @@ namespace EscapeHookah.Shared.Services
                     .Child("reservations")
                     .OnceAsync<Reservation>();
 
-                return reservations
+                var list = reservations
                     .Where(r => r.Object != null && r.Object.UserId == userId)
-                    .Select(r => new Reservation
-                    {
-                        Id = r.Key,
-                        UserId = r.Object.UserId,
-                        UserName = r.Object.UserName ?? "",
-                        TableNumber = r.Object.TableNumber,
-                        ReservationDate = r.Object.ReservationDate,
-                        StartTime = r.Object.StartTime,
-                        EndTime = r.Object.EndTime,
-                        NumberOfGuests = r.Object.NumberOfGuests,
-                        SpecialRequests = r.Object.SpecialRequests ?? "",
-                        Status = r.Object.Status,
-                        CreatedAt = r.Object.CreatedAt
-                    })
+                    .Select(r => MapFirebaseReservation(r.Key, r.Object))
                     .OrderByDescending(r => r.ReservationDate)
                     .ThenBy(r => r.StartTime)
                     .ToList();
+
+                // Mark expired pending reservations as cancelled
+                await CancelExpiredReservations(list);
+
+                // Return only non-cancelled reservations
+                return list.Where(r => r.Status != ReservationStatus.Cancelled).ToList();
             }
             catch (Exception ex)
             {
@@ -83,22 +77,15 @@ namespace EscapeHookah.Shared.Services
                     .Child("reservations")
                     .OnceAsync<Reservation>();
 
-                return reservations
+                var list = reservations
                     .Where(r => r.Object != null)
-                    .Select(r => new Reservation
-                    {
-                        Id = r.Key,
-                        UserId = r.Object.UserId,
-                        UserName = r.Object.UserName ?? "",
-                        TableNumber = r.Object.TableNumber,
-                        ReservationDate = r.Object.ReservationDate,
-                        StartTime = r.Object.StartTime,
-                        EndTime = r.Object.EndTime,
-                        NumberOfGuests = r.Object.NumberOfGuests,
-                        SpecialRequests = r.Object.SpecialRequests ?? "",
-                        Status = r.Object.Status,
-                        CreatedAt = r.Object.CreatedAt
-                    })
+                    .Select(r => MapFirebaseReservation(r.Key, r.Object))
+                    .ToList();
+
+                // Mark expired pending reservations as cancelled
+                await CancelExpiredReservations(list);
+
+                return list
                     .Where(r => r.ReservationDate.Date == date.Date && r.Status != ReservationStatus.Cancelled)
                     .ToList();
             }
@@ -144,6 +131,7 @@ namespace EscapeHookah.Shared.Services
                 if (reservation.UserId != _firebaseAuthService.CurrentUserId)
                     throw new Exception("Reservation user ID does not match authenticated user.");
 
+                // Check availability using current rules (expired pending reservations are cleaned up in GetReservationsByDate)
                 var isAvailable = await IsTableAvailable(
                     reservation.TableNumber,
                     reservation.ReservationDate,
@@ -157,7 +145,16 @@ namespace EscapeHookah.Shared.Services
                 reservation.ReservationDate = reservation.ReservationDate.Date;
                 reservation.UserName ??= string.Empty;
                 reservation.SpecialRequests ??= string.Empty;
-                reservation.Status = ReservationStatus.Confirmed;
+
+                // If creating a hold, set expiration
+                if (reservation.Status == ReservationStatus.Pending)
+                {
+                    reservation.ExpiresAt = DateTime.UtcNow.Add(_holdDuration);
+                }
+
+                // Default to Confirmed if not specified
+                if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
+                    reservation.Status = ReservationStatus.Confirmed;
 
                 var result = await _databaseClient
                     .Child("reservations")
@@ -170,6 +167,99 @@ namespace EscapeHookah.Shared.Services
             {
                 Debug.WriteLine($"Error creating reservation: {ex.Message}");
                 throw;
+            }
+        }
+
+        public async Task<Reservation?> GetReservationById(string reservationId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(reservationId))
+                    return null;
+
+                var reservation = await _databaseClient
+                    .Child("reservations")
+                    .Child(reservationId)
+                    .OnceSingleAsync<Reservation>();
+
+                if (reservation == null)
+                    return null;
+
+                // Map and handle expiry if needed
+                var mapped = MapFirebaseReservation(reservationId, reservation);
+                if (mapped.Status == ReservationStatus.Pending && mapped.ExpiresAt.HasValue && mapped.ExpiresAt.Value.ToUniversalTime() < DateTime.UtcNow)
+                {
+                    // Mark cancelled
+                    mapped.Status = ReservationStatus.Cancelled;
+                    await UpdateReservation(mapped);
+                    return null;
+                }
+
+                return mapped;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error getting reservation by id: {ex.Message}");
+                return null;
+            }
+        }
+
+        public async Task<Reservation?> UpdateReservation(Reservation reservation)
+        {
+            try
+            {
+                if (reservation == null || string.IsNullOrWhiteSpace(reservation.Id))
+                    return null;
+
+                await _databaseClient
+                    .Child("reservations")
+                    .Child(reservation.Id)
+                    .PutAsync(reservation);
+
+                return reservation;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error updating reservation: {ex.Message}");
+                return null;
+            }
+        }
+
+        public async Task<bool> AddMenuItemsToReservation(string reservationId, List<MenuSelection> items)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(reservationId) || items == null || items.Count == 0)
+                    return false;
+
+                var reservation = await _databaseClient
+                    .Child("reservations")
+                    .Child(reservationId)
+                    .OnceSingleAsync<Reservation>();
+
+                if (reservation == null)
+                    return false;
+
+                // Merge into reservation.MenuItems in-memory
+                var existing = reservation.MenuItems ?? new Dictionary<string, int>();
+
+                foreach (var it in items)
+                {
+                    if (existing.ContainsKey(it.MenuItemId))
+                        existing[it.MenuItemId] += it.Quantity;
+                    else
+                        existing[it.MenuItemId] = it.Quantity;
+                }
+
+                reservation.MenuItems = existing;
+
+                await _databaseClient.Child($"reservations/{reservationId}").PutAsync(reservation);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error adding menu items: {ex.Message}");
+                return false;
             }
         }
 
@@ -207,6 +297,46 @@ namespace EscapeHookah.Shared.Services
             {
                 Debug.WriteLine($"Error cancelling reservation: {ex.Message}");
                 return false;
+            }
+        }
+
+        private Reservation MapFirebaseReservation(string key, Reservation raw)
+        {
+            return new Reservation
+            {
+                Id = key,
+                UserId = raw.UserId,
+                UserName = raw.UserName ?? string.Empty,
+                TableNumber = raw.TableNumber,
+                ReservationDate = raw.ReservationDate,
+                StartTime = raw.StartTime,
+                EndTime = raw.EndTime,
+                NumberOfGuests = raw.NumberOfGuests,
+                SpecialRequests = raw.SpecialRequests ?? string.Empty,
+                Status = raw.Status,
+                CreatedAt = raw.CreatedAt,
+                ExpiresAt = raw.ExpiresAt,
+                MenuItems = raw.MenuItems ?? new System.Collections.Generic.Dictionary<string,int>()
+            };
+        }
+
+        private async Task CancelExpiredReservations(List<Reservation> reservations)
+        {
+            var expired = reservations.Where(r => r.Status == ReservationStatus.Pending && r.ExpiresAt.HasValue && r.ExpiresAt.Value.ToUniversalTime() < DateTime.UtcNow).ToList();
+            foreach (var ex in expired)
+            {
+                ex.Status = ReservationStatus.Cancelled;
+                try
+                {
+                    await _databaseClient
+                        .Child("reservations")
+                        .Child(ex.Id)
+                        .PutAsync(ex);
+                }
+                catch (Exception e)
+                {
+                    Debug.WriteLine($"Error marking expired reservation as cancelled: {e.Message}");
+                }
             }
         }
     }

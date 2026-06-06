@@ -1,6 +1,24 @@
-﻿<Router AppAssembly="typeof(Layout.MainLayout).Assembly" NotFoundPage="typeof(Pages.NotFound)">
-    <Found Context="routeData">
-        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
-        <FocusOnNavigate RouteData="routeData" Selector="h1" />
-    </Found>
-</Router>
+﻿@inject NavigationManager Navigation
+<ErrorBoundary>
+    <ChildContent>
+        <Router AppAssembly="@typeof(EscapeHookah.Shared.Layout.MainLayout).Assembly" AdditionalAssemblies="new[] { typeof(EscapeHookah.Shared._Imports).Assembly }">
+            <Found Context="routeData">
+                <RouteView RouteData="@routeData" DefaultLayout="@typeof(EscapeHookah.Shared.Layout.MainLayout)" />
+                <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+            </Found>
+            <NotFound>
+                <PageTitle>Not found</PageTitle>
+                <LayoutView Layout="@typeof(EscapeHookah.Shared.Layout.MainLayout)">
+                    <p role="alert">Sorry, there's nothing at this address.</p>
+                </LayoutView>
+            </NotFound>
+        </Router>
+    </ChildContent>
+    <ErrorContent Context="error">
+        <div class="blazor-error-boundary">
+            <h2>Something went wrong</h2>
+            <p>@error.Message</p>
+            <button class="btn" @onclick="() => Navigation.NavigateTo(Navigation.Uri, true)">Reload</button>
+        </div>
+    </ErrorContent>
+</ErrorBoundary>

@@ -11,6 +11,23 @@ builder.Services.AddRazorComponents()
 // Add device-specific services used by the EscapeHookah.Shared project
 builder.Services.AddSingleton<IFormFactor, FormFactor>();
 
+// Menu service available without authentication
+builder.Services.AddSingleton<EscapeHookah.Shared.Services.IMenuService, EscapeHookah.Shared.Services.MenuService>();
+
+// Configure Firebase FCM service if path provided via env
+var fcmServiceAccount = builder.Configuration["Fcm:ServiceAccountPath"] ?? Environment.GetEnvironmentVariable("FCM_SERVICE_ACCOUNT_PATH");
+if (!string.IsNullOrEmpty(fcmServiceAccount))
+{
+    builder.Services.AddHttpClient();
+    builder.Services.AddSingleton<FcmService>(sp => new FcmService(sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FcmService>>(), sp.GetRequiredService<IHttpClientFactory>(), builder.Configuration));
+    builder.Services.AddHostedService<ReservationNotifierHostedService>();
+}
+else
+{
+    // When no service account provided, register a null FcmService to avoid DI failures
+    builder.Services.AddSingleton<FcmService>(sp => null!);
+}
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

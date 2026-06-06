@@ -1,5 +1,9 @@
 ﻿@inherits LayoutComponentBase
 
+<!-- Ensure shared styles are loaded for all pages inside the MAUI BlazorWebView -->
+<link rel="stylesheet" href="_content/EscapeHookah.Shared/app.css" />
+<link rel="stylesheet" href="app.css" />
+
 <div class="page">
     <div class="sidebar">
         <NavMenu />

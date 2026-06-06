@@ -20,6 +20,8 @@ public static class MauiProgram
         builder.Services.AddSingleton<IFormFactor, FormFactor>();
         builder.Services.AddSingleton<IFirebaseAuthService, FirebaseAuthService>();
         builder.Services.AddSingleton<IReservationService, ReservationService>();
+        // Register IMenuService used by shared pages
+        builder.Services.AddSingleton<EscapeHookah.Shared.Services.IMenuService, EscapeHookah.Shared.Services.MenuService>();
         builder.Services.AddScoped(sp => new HttpClient());
 
         builder.Services.AddMauiBlazorWebView();
@@ -29,6 +31,19 @@ public static class MauiProgram
         builder.Logging.AddDebug();
 #endif
 
-        return builder.Build();
+        var app = builder.Build();
+
+        // Global exception handlers to surface unhandled errors from MAUI/BlazorWebView host
+        AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
+        {
+            try { System.Diagnostics.Debug.WriteLine($"Global UnhandledException: {e.ExceptionObject}"); } catch { }
+        };
+
+        TaskScheduler.UnobservedTaskException += (sender, e) =>
+        {
+            try { System.Diagnostics.Debug.WriteLine($"Global UnobservedTaskException: {e.Exception}"); e.SetObserved(); } catch { }
+        };
+
+        return app;
     }
 }

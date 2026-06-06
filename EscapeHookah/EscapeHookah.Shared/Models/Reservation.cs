@@ -1,11 +1,15 @@
 ﻿using System;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 
 namespace EscapeHookah.Shared.Models
 {
+    [JsonConverter(typeof(StringEnumConverter))]
     public enum ReservationStatus
     {
-        Confirmed = 0,
-        Cancelled = 1
+        Pending = 0,
+        Confirmed = 1,
+        Cancelled = 2
     }
 
     public class Reservation
@@ -19,7 +23,9 @@ namespace EscapeHookah.Shared.Models
         public TimeSpan EndTime { get; set; }
         public int NumberOfGuests { get; set; }
         public string SpecialRequests { get; set; } = string.Empty;
-        public ReservationStatus Status { get; set; } = ReservationStatus.Confirmed;
+        public ReservationStatus Status { get; set; } = ReservationStatus.Pending;
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime? ExpiresAt { get; set; }
+        public System.Collections.Generic.Dictionary<string,int> MenuItems { get; set; } = new();
     }
 }

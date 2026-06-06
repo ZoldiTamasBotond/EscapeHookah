@@ -12,6 +12,11 @@ namespace EscapeHookah.Shared.Services
         Task<List<Reservation>> GetReservationsByDate(DateTime date);
         Task<bool> IsTableAvailable(int tableNumber, DateTime date, TimeSpan startTime, TimeSpan endTime);
         Task<Reservation?> CreateReservation(Reservation reservation);
+        Task<Reservation?> GetReservationById(string reservationId);
+        Task<Reservation?> UpdateReservation(Reservation reservation);
         Task<bool> CancelReservation(string reservationId, string userId);
+
+        // Menu items on a reservation
+        Task<bool> AddMenuItemsToReservation(string reservationId, List<MenuSelection> items);
     }
 }

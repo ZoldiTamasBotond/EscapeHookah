@@ -1,10 +1,11 @@
-﻿@page "/reservations"
+@page "/reservations"
 @using EscapeHookah.Shared.Services
 @using EscapeHookah.Shared.Models
 @using System.Timers
 @using System.Diagnostics
 @inject IFirebaseAuthService FirebaseAuthService
 @inject IReservationService ReservationService
+@inject IMenuService MenuService
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 
@@ -114,9 +115,8 @@ else
             {
                 <div class="time-selection">
                     <h3>Select Time for Table @selectedTable</h3>
-
                     <div class="time-slots">
-                        @foreach (var slot in GetAvailableTimeSlots(selectedTable))
+                        @foreach (var slot in timeSlots)
                         {
                             <button class="time-slot @(selectedStartTime == slot.Start ? "selected" : "")"
                                     @onclick="() => SelectTimeSlot(slot.Start, slot.End)">
@@ -124,7 +124,6 @@ else
                             </button>
                         }
                     </div>
-
                     @if (selectedStartTime != TimeSpan.Zero)
                     {
                         <div class="selected-time-info">
@@ -144,7 +143,6 @@ else
                               rows="3"
                               placeholder="Any special requests? (e.g., allergies, occasion, etc.)"></textarea>
                 </div>
-
                 <div class="reservation-summary">
                     <h3>Reservation Summary</h3>
                     <div class="summary-details">
@@ -157,7 +155,6 @@ else
                             <p><strong>Special Requests:</strong> @specialRequests</p>
                         }
                     </div>
-
                     <button class="confirm-button" @onclick="ConfirmReservation">
                         Confirm Reservation
                     </button>
@@ -168,7 +165,6 @@ else
         <!-- My Reservations -->
         <div class="my-reservations">
             <h2>My Reservations</h2>
-
             @if (userReservations.Count == 0)
             {
                 <p class="no-reservations">You don't have any reservations yet.</p>
@@ -193,16 +189,82 @@ else
                                 {
                                     <p class="special-requests">📝 @reservation.SpecialRequests</p>
                                 }
+
+                                @if (reservation.MenuItems != null && reservation.MenuItems.Count > 0)
+                                {
+                                    <div class="reservation-menu">
+                                        <h4>Menu items</h4>
+                                        <ul>
+                                            @foreach (var mi in reservation.MenuItems)
+                                            {
+                                                var menuItemId = mi.Key;
+                                                var qty = mi.Value;
+                                                var menuPrice = (menuItemsDict != null && menuItemsDict.TryGetValue(menuItemId, out var m) ? m.Price : 0m);
+                                                var name = (menuItemsDict != null && menuItemsDict.TryGetValue(menuItemId, out var m2) ? m2.Name : menuItemId);
+                                                var subtotal = menuPrice * qty;
+                                                <li class="reservation-menu-item">
+                                                    <div class="menu-item-row">
+                                                        <span class="menu-name">@name</span>
+                                                        <span class="menu-price">@menuPrice.ToString("C")</span>
+                                                        <div class="qty-stepper">
+                                                            <button class="stepper-btn" @onclick="() => ChangeMenuQuantity(reservation, menuItemId, -1)" disabled="@(isLoading)">-</button>
+                                                            <span class="qty">@qty</span>
+                                                            <button class="stepper-btn" @onclick="() => ChangeMenuQuantity(reservation, menuItemId, 1)" disabled="@(isLoading)">+</button>
+                                                        </div>
+                                                        <span class="menu-subtotal">@subtotal.ToString("C")</span>
+                                                    </div>
+                                                </li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
                             </div>
-                            @if (reservation.Status == ReservationStatus.Confirmed && reservation.ReservationDate >= DateTime.Today)
-                            {
-                                <button class="cancel-button" @onclick="() => CancelReservation(reservation.Id)">
-                                    Cancel Reservation
-                                </button>
-                            }
+
+                            <div class="reservation-actions">
+                                <button class="add-menu-button" @onclick="() => NavigateToMenu(reservation.Id)">Add menu items</button>
+                                @if (reservation.Status == ReservationStatus.Confirmed && reservation.ReservationDate >= DateTime.Today)
+                                {
+                                    <button class="cancel-button" @onclick="() => CancelReservation(reservation.Id)">
+                                        Cancel Reservation
+                                    </button>
+                                }
+                            </div>
                         </div>
                     }
                 </div>
+            }
+        </div>
+
+        <!-- Order totals -->
+        <div class="reservation-totals">
+            <h3>Order summary</h3>
+            @if (userReservations.Count > 0)
+            {
+                decimal grandTotal = 0m;
+                foreach (var r in userReservations)
+                {
+                    decimal total = 0m;
+                    if (r.MenuItems != null)
+                    {
+                        foreach (var mi in r.MenuItems)
+                        {
+                            if (menuItemsDict != null && menuItemsDict.TryGetValue(mi.Key, out var m))
+                                total += m.Price * mi.Value;
+                        }
+                    }
+                    grandTotal += total;
+                    <div class="reservation-total-item">
+                        <div>Reservation Table @r.TableNumber - @r.ReservationDate.ToString("MMMM dd, yyyy")</div>
+                        <div>Total menu: @total.ToString("C")</div>
+                    </div>
+                }
+                <div class="reservation-grand-total">
+                    <strong>Grand total for all reservations: @grandTotal.ToString("C")</strong>
+                </div>
+            }
+            else
+            {
+                <p>No reservations</p>
             }
         </div>
     </div>
@@ -222,6 +284,7 @@ else
 
     private List<Table> tables = new();
     private List<Reservation> userReservations = new();
+    private System.Collections.Generic.Dictionary<string, MenuItem>? menuItemsDict;
 
     private class TimeSlot
     {
@@ -259,6 +322,9 @@ else
         await LoadUserData();
         await LoadUserReservations();
         tables = await ReservationService.GetTables();
+        // preload menu items dictionary for display names
+        var allMenu = await MenuService.GetMenu();
+        menuItemsDict = allMenu?.ToDictionary(x => x.Id) ?? new System.Collections.Generic.Dictionary<string, MenuItem>();
     }
 
     private async Task LoadUserData()
@@ -304,6 +370,63 @@ else
     {
         selectedStartTime = start;
         selectedEndTime = end;
+    }
+
+    private void NavigateToMenu(string reservationId)
+    {
+        var uri = $"/menu?reservationId={reservationId}";
+        Navigation.NavigateTo(uri);
+    }
+
+    private async Task ChangeMenuQuantity(Reservation reservation, string menuItemId, int delta)
+    {
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            if (reservation.MenuItems == null)
+                reservation.MenuItems = new System.Collections.Generic.Dictionary<string,int>();
+
+            var current = reservation.MenuItems.ContainsKey(menuItemId) ? reservation.MenuItems[menuItemId] : 0;
+            var updatedQty = current + delta;
+
+            if (updatedQty <= 0)
+            {
+                // confirm before removing
+                var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "Set quantity to 0 and remove item from reservation?");
+                if (!confirmed)
+                {
+                    isLoading = false;
+                    StateHasChanged();
+                    return;
+                }
+                reservation.MenuItems.Remove(menuItemId);
+            }
+            else
+            {
+                reservation.MenuItems[menuItemId] = updatedQty;
+            }
+
+            var updated = await ReservationService.UpdateReservation(reservation);
+            if (updated != null)
+            {
+                await LoadUserReservations();
+            }
+            else
+            {
+                errorMessage = "Could not update menu item quantity.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Error updating menu items: " + ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
     }
 
     private bool IsTableAvailable(Table table)

@@ -1,0 +1,74 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && $uid === auth.uid",
+        ".write": "auth != null && $uid === auth.uid"
+      }
+    },
+    "usernames": {
+      ".read": true,
+      ".write": "auth != null",
+      "$username": {
+        ".validate": "!data.exists() || data.val() === auth.uid"
+      }
+    },
+    "deviceTokens": {
+      "$uid": {
+        "$token": {
+          ".read": "auth != null && $uid === auth.uid",
+          ".write": "auth != null && $uid === auth.uid",
+          ".validate": "newData.isString()"
+        }
+      }
+    },
+    "reservations": {
+      ".read": "auth != null",
+      "$reservationId": {
+        ".write": "auth != null && ( !data.exists() ? newData.child('UserId').val() === auth.uid : data.child('UserId').val() === auth.uid )",
+
+        "UserId": {
+          ".validate": "newData.isString() && newData.val() === auth.uid"
+        },
+        "UserName": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+        "TableNumber": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "ReservationDate": {
+          // Accepts ISO date string or numeric timestamp
+          ".validate": "newData.exists() && (newData.isString() || newData.isNumber())"
+        },
+        "StartTime": {
+          // Accepts string (HH:mm) or numeric ticks/seconds
+          ".validate": "newData.exists() && (newData.isString() || newData.isNumber())"
+        },
+        "EndTime": {
+          ".validate": "newData.exists() && (newData.isString() || newData.isNumber())"
+        },
+        "NumberOfGuests": {
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 8"
+        },
+        "SpecialRequests": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+        "MenuItems": {
+          "$itemId": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          }
+        },
+        "Status": {
+          // allow ReservationStatus as number (enum) or string names: Pending, Confirmed, Cancelled
+          ".validate": "(newData.isNumber() && (newData.val() == 0 || newData.val() == 1 || newData.val() == 2)) || (newData.isString() && (newData.val() === 'Pending' || newData.val() === 'Confirmed' || newData.val() === 'Cancelled'))"
+        },
+        "CreatedAt": {
+          ".validate": "newData.exists() && (newData.isNumber() || newData.isString())"
+        },
+        "ExpiresAt": {
+          ".validate": "!newData.exists() || newData.isNumber() || newData.isString()"
+        }
+      }
+    }
+  }
+}

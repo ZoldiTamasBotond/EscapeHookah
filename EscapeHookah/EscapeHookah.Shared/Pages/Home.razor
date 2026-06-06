@@ -1,5 +1,6 @@
 ﻿@page "/"
 @using EscapeHookah.Shared.Services
+@inject NavigationManager Navigation
 
 <PageTitle>EscapeHookah - Home</PageTitle>
 
@@ -53,9 +54,8 @@
 
     <!-- Call to Action -->
     <div class="button-container">
-        <button class="cta-button" @onclick="() => ShowWelcomeMessage()">
-            Book Your Session
-        </button>
+        <button class="cta-button" @onclick='() => Navigation.NavigateTo("/reservations")'>Book Your Session</button>
+        <button class="cta-button" @onclick='() => Navigation.NavigateTo("/menu")' style="margin-left:1rem;">View Menu</button>
     </div>
 
     <!-- Footer -->
