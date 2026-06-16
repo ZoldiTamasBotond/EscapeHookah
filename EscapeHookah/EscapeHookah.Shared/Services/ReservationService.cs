@@ -20,20 +20,39 @@ namespace EscapeHookah.Shared.Services
         {
             _firebaseAuthService = firebaseAuthService;
 
-            _databaseClient = new FirebaseClient(
-                "https://escapehookah-781e5-default-rtdb.europe-west1.firebasedatabase.app/",
-                new FirebaseOptions
-                {
-                    AuthTokenAsyncFactory = async () => await _firebaseAuthService.GetIdTokenAsync()
-                });
+            // initialize database client lazily to avoid token refresh issues
+            _databaseClient = null;
 
-            _tables = new List<Table>
+            try
             {
-                new Table { TableNumber = 1, Capacity = 4, Location = "Main Hall - Window" },
-                new Table { TableNumber = 2, Capacity = 6, Location = "Main Hall - Center" },
-                new Table { TableNumber = 3, Capacity = 4, Location = "VIP Section" },
-                new Table { TableNumber = 4, Capacity = 8, Location = "Garden Terrace" }
-            };
+                _databaseClient = new FirebaseClient(
+                    "https://escapehookah-781e5-default-rtdb.europe-west1.firebasedatabase.app/",
+                    new FirebaseOptions
+                    {
+                        AuthTokenAsyncFactory = async () => await _firebaseAuthService.GetIdTokenAsync()
+                    });
+            }
+            catch
+            {
+                // will attempt later
+            }
+
+            _tables = TableLayoutDefinitions.AllTables;
+        }
+
+        public async Task<List<Reservation>> GetAllReservations()
+        {
+            try
+            {
+                var list = await FetchAllReservationsFromDatabaseAsync();
+                await CancelExpiredReservations(list);
+                return list.Where(r => !IsHistorical(r)).ToList();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error getting all reservations: {ex.Message}");
+                return new List<Reservation>();
+            }
         }
 
         public Task<List<Table>> GetTables()
@@ -45,26 +64,49 @@ namespace EscapeHookah.Shared.Services
         {
             try
             {
-                var reservations = await _databaseClient
-                    .Child("reservations")
-                    .OnceAsync<Reservation>();
+                var list = await FetchAllReservationsFromDatabaseAsync();
+                list = list.Where(r => r.UserId == userId).ToList();
 
-                var list = reservations
-                    .Where(r => r.Object != null && r.Object.UserId == userId)
-                    .Select(r => MapFirebaseReservation(r.Key, r.Object))
-                    .OrderByDescending(r => r.ReservationDate)
-                    .ThenBy(r => r.StartTime)
-                    .ToList();
-
-                // Mark expired pending reservations as cancelled
                 await CancelExpiredReservations(list);
 
-                // Return only non-cancelled reservations
-                return list.Where(r => r.Status != ReservationStatus.Cancelled).ToList();
+                return list.Where(r => !IsHistorical(r)).ToList();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Error getting user reservations: {ex.Message}");
+                return new List<Reservation>();
+            }
+        }
+
+        public async Task<List<Reservation>> GetUserReservationHistory(string userId)
+        {
+            try
+            {
+                var list = await FetchAllReservationsFromDatabaseAsync();
+                list = list.Where(r => r.UserId == userId).ToList();
+
+                await CancelExpiredReservations(list);
+
+                return list.Where(r => IsHistorical(r)).ToList();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error getting user reservation history: {ex.Message}");
+                return new List<Reservation>();
+            }
+        }
+
+        public async Task<List<Reservation>> GetAllReservationHistory()
+        {
+            try
+            {
+                var list = await FetchAllReservationsFromDatabaseAsync();
+                await CancelExpiredReservations(list);
+                return list.Where(r => IsHistorical(r)).ToList();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error getting all reservation history: {ex.Message}");
                 return new List<Reservation>();
             }
         }
@@ -263,6 +305,37 @@ namespace EscapeHookah.Shared.Services
             }
         }
 
+        public async Task<bool> AddCustomHookahToReservation(string reservationId, HookahCustomMix mix)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(reservationId) || mix == null || string.IsNullOrWhiteSpace(mix.Id))
+                    return false;
+
+                var reservation = await _databaseClient
+                    .Child("reservations")
+                    .Child(reservationId)
+                    .OnceSingleAsync<Reservation>();
+
+                if (reservation == null)
+                    return false;
+
+                reservation.MenuItems ??= new Dictionary<string, int>();
+                reservation.HookahMixes ??= new Dictionary<string, HookahCustomMix>();
+
+                reservation.MenuItems[mix.Id] = 1;
+                reservation.HookahMixes[mix.Id] = mix;
+
+                await _databaseClient.Child($"reservations/{reservationId}").PutAsync(reservation);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error adding custom hookah: {ex.Message}");
+                return false;
+            }
+        }
+
         public async Task<bool> CancelReservation(string reservationId, string userId)
         {
             try
@@ -300,6 +373,29 @@ namespace EscapeHookah.Shared.Services
             }
         }
 
+        private async Task<List<Reservation>> FetchAllReservationsFromDatabaseAsync()
+        {
+            var reservations = await _databaseClient
+                .Child("reservations")
+                .OnceAsync<Reservation>();
+
+            return reservations
+                .Where(r => r.Object != null)
+                .Select(r => MapFirebaseReservation(r.Key, r.Object))
+                .OrderByDescending(r => r.ReservationDate)
+                .ThenBy(r => r.StartTime)
+                .ToList();
+        }
+
+        private static bool IsHistorical(Reservation reservation)
+        {
+            if (reservation.Status == ReservationStatus.Cancelled)
+                return true;
+
+            var reservationEnd = reservation.ReservationDate.Date.Add(reservation.EndTime);
+            return reservationEnd < DateTime.Now;
+        }
+
         private Reservation MapFirebaseReservation(string key, Reservation raw)
         {
             return new Reservation
@@ -316,7 +412,8 @@ namespace EscapeHookah.Shared.Services
                 Status = raw.Status,
                 CreatedAt = raw.CreatedAt,
                 ExpiresAt = raw.ExpiresAt,
-                MenuItems = raw.MenuItems ?? new System.Collections.Generic.Dictionary<string,int>()
+                MenuItems = raw.MenuItems ?? new System.Collections.Generic.Dictionary<string,int>(),
+                HookahMixes = raw.HookahMixes ?? new System.Collections.Generic.Dictionary<string, HookahCustomMix>()
             };
         }
 

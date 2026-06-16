@@ -16,5 +16,10 @@ namespace EscapeHookah.Shared.Services
         Task<bool> LoginUser(string email, string password);
         void Logout();
         bool IsFirebaseAvailable { get; }
+
+        // Admin helpers
+        Task<bool> IsUserAdminAsync(string userId);
+        Task<bool> PromoteUserToAdmin(string userId);
+        Task<bool> CreateAdminUser(string email, string password, string firstName, string lastName, string username, string phoneNumber);
     }
 }

@@ -1,0 +1,195 @@
+@page "/history"
+@using EscapeHookah.Shared.Services
+@using EscapeHookah.Shared.Models
+@inject IFirebaseAuthService FirebaseAuthService
+@inject IReservationService ReservationService
+@inject IMenuService MenuService
+@inject NavigationManager Navigation
+
+<PageTitle>EscapeHookah - History</PageTitle>
+
+<link rel="stylesheet" href="app.css" />
+
+@if (!FirebaseAuthService.IsAuthenticated)
+{
+    <div class="auth-required">
+        <div class="auth-card">
+            <div class="auth-icon">🔒</div>
+            <h2>Login Required</h2>
+            <p>Please log in to view your reservation history</p>
+            <button class="cta-button" @onclick="GoToLogin">
+                Go to Login
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="history-container">
+        <div class="history-header">
+            <h1>Reservation History</h1>
+            <p>@(isAdmin ? "All past and cancelled reservations" : "Your past and cancelled reservations")</p>
+        </div>
+
+        @if (isLoading)
+        {
+            <div class="history-loading">
+                <div class="spinner"></div>
+                <p>Loading history...</p>
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="error-message">⚠️ @errorMessage</div>
+        }
+        else
+        {
+            <div class="history-summary">
+                <span class="history-stat">@historyReservations.Count total</span>
+                <span class="history-stat">@cancelledCount cancelled</span>
+                <span class="history-stat">@pastCount past</span>
+            </div>
+
+            @if (historyReservations.Count == 0)
+            {
+                <p class="no-reservations">No past or cancelled reservations yet.</p>
+            }
+            else
+            {
+                <div class="reservations-list">
+                    @foreach (var reservation in historyReservations)
+                    {
+                        var historyType = GetHistoryType(reservation);
+                        <div class="reservation-item history-item @reservation.Status.ToString().ToLower()">
+                            <div class="reservation-header">
+                                <span class="reservation-table">Table @reservation.TableNumber</span>
+                                <span class="history-type-badge @historyType.ToLower()">@historyType</span>
+                                <span class="reservation-status @reservation.Status.ToString().ToLower()">
+                                    @reservation.Status
+                                </span>
+                            </div>
+
+                            @if (isAdmin)
+                            {
+                                <p class="history-user">👤 @reservation.UserName</p>
+                            }
+
+                            <div class="reservation-details">
+                                <p>📅 @reservation.ReservationDate.ToString("MMMM dd, yyyy")</p>
+                                <p>⏰ @reservation.StartTime.ToString(@"hh\:mm") - @reservation.EndTime.ToString(@"hh\:mm")</p>
+                                <p>👥 @reservation.NumberOfGuests guests</p>
+                                @if (!string.IsNullOrEmpty(reservation.SpecialRequests))
+                                {
+                                    <p class="special-requests">📝 @reservation.SpecialRequests</p>
+                                }
+
+                                @if (reservation.MenuItems != null && reservation.MenuItems.Count > 0)
+                                {
+                                    <div class="reservation-menu">
+                                        <h4>Menu items</h4>
+                                        <ul>
+                                            @foreach (var mi in reservation.MenuItems)
+                                            {
+                                                var name = GetMenuLineName(reservation, mi.Key, mi.Value);
+                                                var unitPrice = GetMenuUnitPrice(reservation, mi.Key);
+                                                <li class="reservation-menu-item">
+                                                    <div class="menu-item-row history-menu-row">
+                                                        <span class="menu-name">@name</span>
+                                                        @if (reservation.HookahMixes != null && reservation.HookahMixes.TryGetValue(mi.Key, out var mix))
+                                                        {
+                                                            <div class="hookah-mix-breakdown">
+                                                                @foreach (var part in mix.FlavorPercentages.OrderByDescending(p => p.Value))
+                                                                {
+                                                                    var flavorName = menuItemsDict != null && menuItemsDict.TryGetValue(part.Key, out var flavor)
+                                                                        ? flavor.Name
+                                                                        : part.Key;
+                                                                    <span class="mix-part">@flavorName @part.Value%</span>
+                                                                }
+                                                            </div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="menu-qty">x @mi.Value</span>
+                                                        }
+                                                        <span class="menu-subtotal">@((unitPrice * mi.Value).ToString("C"))</span>
+                                                    </div>
+                                                </li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </div>
+}
+
+@code {
+    private string userId = "";
+    private bool isAdmin = false;
+    private bool isLoading = true;
+    private string errorMessage = "";
+    private List<Reservation> historyReservations = new();
+    private Dictionary<string, MenuItem>? menuItemsDict;
+
+    private int cancelledCount => historyReservations.Count(r => r.Status == ReservationStatus.Cancelled);
+    private int pastCount => historyReservations.Count(r => r.Status != ReservationStatus.Cancelled);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!FirebaseAuthService.IsAuthenticated)
+            return;
+
+        try
+        {
+            userId = FirebaseAuthService.CurrentUserId;
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                errorMessage = "Authenticated user ID is missing.";
+                return;
+            }
+
+            isAdmin = await FirebaseAuthService.IsUserAdminAsync(userId);
+
+            var allMenu = await MenuService.GetMenu();
+            menuItemsDict = allMenu?.ToDictionary(x => x.Id) ?? new Dictionary<string, MenuItem>();
+
+            historyReservations = isAdmin
+                ? await ReservationService.GetAllReservationHistory()
+                : await ReservationService.GetUserReservationHistory(userId);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Could not load history: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void GoToLogin() => Navigation.NavigateTo("/login");
+
+    private static string GetHistoryType(Reservation reservation)
+    {
+        if (reservation.Status == ReservationStatus.Cancelled)
+            return "Cancelled";
+
+        return "Past";
+    }
+
+    private string GetMenuLineName(Reservation reservation, string menuItemKey, int quantity)
+    {
+        var lookup = menuItemsDict ?? new Dictionary<string, MenuItem>();
+        return HookahMixHelper.GetLineDisplayName(menuItemKey, quantity, reservation, lookup);
+    }
+
+    private decimal GetMenuUnitPrice(Reservation reservation, string menuItemKey)
+    {
+        var lookup = menuItemsDict ?? new Dictionary<string, MenuItem>();
+        return HookahMixHelper.GetLinePrice(menuItemKey, 1, reservation, lookup);
+    }
+}

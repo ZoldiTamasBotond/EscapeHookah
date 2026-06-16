@@ -11,8 +11,12 @@ builder.Services.AddRazorComponents()
 // Add device-specific services used by the EscapeHookah.Shared project
 builder.Services.AddSingleton<IFormFactor, FormFactor>();
 
-// Menu service available without authentication
-builder.Services.AddSingleton<EscapeHookah.Shared.Services.IMenuService, EscapeHookah.Shared.Services.MenuService>();
+// Register HttpClient and Firebase auth/reservation/menu services as scoped so auth session is per user
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<EscapeHookah.Shared.Services.FirebaseAuthService>();
+builder.Services.AddScoped<IFirebaseAuthService>(sp => sp.GetRequiredService<EscapeHookah.Shared.Services.FirebaseAuthService>());
+builder.Services.AddScoped<EscapeHookah.Shared.Services.IReservationService, EscapeHookah.Shared.Services.ReservationService>();
+builder.Services.AddScoped<EscapeHookah.Shared.Services.IMenuService, EscapeHookah.Shared.Services.MenuService>();
 
 // Configure Firebase FCM service if path provided via env
 var fcmServiceAccount = builder.Configuration["Fcm:ServiceAccountPath"] ?? Environment.GetEnvironmentVariable("FCM_SERVICE_ACCOUNT_PATH");
@@ -29,6 +33,23 @@ else
 }
 
 var app = builder.Build();
+
+// Optional startup seed: create initial admin user if requested via config or environment
+var seedAdmin = builder.Configuration["SeedAdmin"] ?? Environment.GetEnvironmentVariable("SEED_ADMIN");
+if (!string.IsNullOrEmpty(seedAdmin) && seedAdmin.Equals("true", System.StringComparison.OrdinalIgnoreCase))
+{
+    try
+    {
+        var auth = app.Services.GetRequiredService<IFirebaseAuthService>();
+        // Create admin user with email admin@local and password admin, username 'admin'
+        // This call is safe to run even if user already exists (method returns false on failure)
+        auth.CreateAdminUser("admin@local", "admin", "Admin", "User", "admin", "").GetAwaiter().GetResult();
+    }
+    catch (System.Exception)
+    {
+        // Ignore seed failures
+    }
+}
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

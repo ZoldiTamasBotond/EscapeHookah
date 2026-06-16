@@ -1,0 +1,417 @@
+@page "/menu/customize"
+@using EscapeHookah.Shared.Services
+@using EscapeHookah.Shared.Models
+@inject IMenuService MenuService
+@inject IReservationService ReservationService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<PageTitle>EscapeHookah - Customise Hookah</PageTitle>
+
+<link rel="stylesheet" href="app.css" />
+
+<div class="customize-container">
+    <div class="customize-header">
+        <button class="admin-button admin-button-secondary customize-back" @onclick="GoBack">← Back to Menu</button>
+        <h1>Customise Your Hookah</h1>
+        <p>@headerSubtitle</p>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="customize-loading">
+            <div class="spinner"></div>
+            <p>Loading flavors...</p>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="error-message">⚠️ @errorMessage</div>
+    }
+    else if (selectedMixType == null)
+    {
+        <div class="hookah-type-grid">
+            @foreach (var option in mixTypeOptions)
+            {
+                <button class="hookah-type-card" @onclick="() => SelectMixType(option.Type)">
+                    <span class="hookah-type-icon">@option.Icon</span>
+                    <span class="hookah-type-name">@option.Label</span>
+                    <span class="hookah-type-desc">@option.Description</span>
+                    @if (option.Price.HasValue)
+                    {
+                        <span class="hookah-type-price">@option.Price.Value.ToString("C")</span>
+                    }
+                </button>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="customize-panel">
+            <div class="customize-type-bar">
+                <span class="customize-type-label">@GetMixTypeLabel(selectedMixType.Value)</span>
+                @if (pricingItem != null)
+                {
+                    <span class="customize-type-price">@pricingItem.Price.ToString("C")</span>
+                }
+                <button class="admin-button admin-button-small admin-button-secondary" @onclick="ClearMixType">Change type</button>
+            </div>
+
+            @if (selectedMixType == HookahMixType.Mix)
+            {
+                <p class="customize-hint">Mix must total 50% Blonde and 50% Dark. Adjust in 5% steps.</p>
+                <div class="flavor-group">
+                    <h3>Blonde flavors <span class="group-total">(@blondeTotal% / 50%)</span></h3>
+                    @foreach (var flavor in blondeFlavors)
+                    {
+                        @RenderFlavorSlider(flavor)
+                    }
+                </div>
+                <div class="flavor-group">
+                    <h3>Dark flavors <span class="group-total">(@darkTotal% / 50%)</span></h3>
+                    @foreach (var flavor in darkFlavors)
+                    {
+                        @RenderFlavorSlider(flavor)
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="customize-hint">Mix flavors in 5% steps. Total must equal 100%.</p>
+                <div class="flavor-group">
+                    <h3>@GetMixTypeLabel(selectedMixType.Value) flavors <span class="group-total">(@totalPercent% / 100%)</span></h3>
+                    @if (!availableFlavors.Any())
+                    {
+                        <p class="customize-empty">No flavors found for this type. Ask an admin to add Hookah items with description "@GetRequiredDescription(selectedMixType.Value)".</p>
+                    }
+                    @foreach (var flavor in availableFlavors)
+                    {
+                        @RenderFlavorSlider(flavor)
+                    }
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(validationMessage))
+            {
+                <div class="error-message">⚠️ @validationMessage</div>
+            }
+
+            <div class="customize-summary">
+                <h3>Your mix</h3>
+                @if (activeMixParts.Count == 0)
+                {
+                    <p class="customize-empty">Move the sliders to build your mix.</p>
+                }
+                else
+                {
+                    <ul class="mix-preview-list">
+                        @foreach (var part in activeMixParts)
+                        {
+                            <li>@part.Name — @part.Percent%</li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            <div class="admin-form-actions">
+                <button class="confirm-button" @onclick="AddToReservationAsync" disabled="@(isSaving || !CanSubmit)">
+                    @(isSaving ? "Adding..." : "Add to Reservation")
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<MenuItem>? allMenuItems;
+    private string? reservationId;
+    private HookahMixType? selectedMixType;
+    private MenuItem? pricingItem;
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private string errorMessage = "";
+    private string validationMessage = "";
+    private Dictionary<string, int> flavorPercentages = new();
+
+    private IEnumerable<MenuItem> availableFlavors =>
+        selectedMixType.HasValue && allMenuItems != null
+            ? HookahMixHelper.GetFlavorsForType(allMenuItems, selectedMixType.Value)
+            : Enumerable.Empty<MenuItem>();
+
+    private IEnumerable<MenuItem> blondeFlavors =>
+        availableFlavors.Where(f => string.Equals(f.Description, HookahMixHelper.DescBlonde, StringComparison.OrdinalIgnoreCase));
+
+    private IEnumerable<MenuItem> darkFlavors =>
+        availableFlavors.Where(f => string.Equals(f.Description, HookahMixHelper.DescDark, StringComparison.OrdinalIgnoreCase));
+
+    private int totalPercent => flavorPercentages.Values.Sum();
+    private int blondeTotal => blondeFlavors.Sum(f => flavorPercentages.GetValueOrDefault(f.Id));
+    private int darkTotal => darkFlavors.Sum(f => flavorPercentages.GetValueOrDefault(f.Id));
+
+    private bool CanSubmit =>
+        selectedMixType.HasValue
+        && pricingItem != null
+        && !string.IsNullOrWhiteSpace(reservationId)
+        && HookahMixHelper.ValidateMix(selectedMixType.Value, flavorPercentages, allMenuItems ?? new List<MenuItem>(), out _);
+
+    private string headerSubtitle => string.IsNullOrWhiteSpace(reservationId)
+        ? "Select a reservation from the menu first."
+        : selectedMixType.HasValue
+            ? "Build your flavor mix, then add it to your reservation."
+            : "Choose your hookah type to start mixing flavors.";
+
+    private record MixTypeOption(HookahMixType Type, string Label, string Description, string Icon, decimal? Price);
+    private List<MixTypeOption> mixTypeOptions = new();
+
+    private record MixPart(string Name, int Percent);
+    private List<MixPart> activeMixParts =>
+        flavorPercentages
+            .Where(p => p.Value > 0)
+            .Select(p =>
+            {
+                var name = allMenuItems?.FirstOrDefault(m => m.Id == p.Key)?.Name ?? p.Key;
+                return new MixPart(name, p.Value);
+            })
+            .OrderByDescending(p => p.Percent)
+            .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var q = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        reservationId = q.Get("reservationId");
+
+        if (string.IsNullOrWhiteSpace(reservationId))
+        {
+            errorMessage = "No reservation selected. Open the menu from a reservation first.";
+            isLoading = false;
+            return;
+        }
+
+        allMenuItems = await MenuService.GetMenu();
+        BuildMixTypeOptions();
+
+        var typeParam = q.Get("type");
+        if (!string.IsNullOrWhiteSpace(typeParam) && Enum.TryParse<HookahMixType>(typeParam, true, out var parsedType))
+        {
+            SelectMixType(parsedType);
+        }
+        else
+        {
+            var pricingId = q.Get("pricingItemId");
+            if (!string.IsNullOrWhiteSpace(pricingId))
+            {
+                var item = allMenuItems.FirstOrDefault(m => m.Id == pricingId);
+                if (item != null)
+                {
+                    var mixType = HookahMixHelper.GetMixTypeFromPricingItem(item);
+                    if (mixType.HasValue)
+                        SelectMixType(mixType.Value);
+                }
+            }
+        }
+
+        isLoading = false;
+    }
+
+    private void BuildMixTypeOptions()
+    {
+        mixTypeOptions = new List<MixTypeOption>
+        {
+            CreateOption(HookahMixType.Adalya, "Adalya Hookah", "Mix Adalya flavors only", "🍃"),
+            CreateOption(HookahMixType.Blonde, "Blonde Hookah", "Mix Blonde flavors only", "✨"),
+            CreateOption(HookahMixType.Dark, "Dark Hookah", "Mix Dark flavors only", "🌙"),
+            CreateOption(HookahMixType.Mix, "Blonde + Dark Mix", "Exactly 50% Blonde and 50% Dark", "⚖️")
+        };
+    }
+
+    private MixTypeOption CreateOption(HookahMixType type, string label, string description, string icon)
+    {
+        var price = allMenuItems != null ? HookahMixHelper.FindPricingItem(allMenuItems, type)?.Price : null;
+        return new MixTypeOption(type, label, description, icon, price);
+    }
+
+    private void SelectMixType(HookahMixType type)
+    {
+        selectedMixType = type;
+        pricingItem = allMenuItems != null ? HookahMixHelper.FindPricingItem(allMenuItems, type) : null;
+        flavorPercentages = new Dictionary<string, int>();
+        validationMessage = "";
+
+        if (pricingItem == null)
+            validationMessage = $"Pricing item \"{GetPricingName(type)}\" was not found in the menu. Ask an admin to add it.";
+
+        if (type == HookahMixType.Mix)
+            PreselectMixDefaults();
+    }
+
+    private void PreselectMixDefaults()
+    {
+        var firstBlonde = blondeFlavors.FirstOrDefault();
+        var firstDark = darkFlavors.FirstOrDefault();
+        flavorPercentages.Clear();
+
+        if (firstBlonde != null)
+            flavorPercentages[firstBlonde.Id] = 50;
+        if (firstDark != null)
+            flavorPercentages[firstDark.Id] = 50;
+    }
+
+    private void ClearMixType()
+    {
+        selectedMixType = null;
+        pricingItem = null;
+        flavorPercentages.Clear();
+        validationMessage = "";
+    }
+
+    private RenderFragment RenderFlavorSlider(MenuItem flavor) => __builder =>
+    {
+        var current = flavorPercentages.GetValueOrDefault(flavor.Id);
+        var maxForSlider = GetMaxForFlavor(flavor.Id);
+
+        __builder.OpenElement(0, "div");
+        __builder.AddAttribute(1, "class", "flavor-slider-row");
+        __builder.OpenElement(2, "div");
+        __builder.AddAttribute(3, "class", "flavor-slider-info");
+        __builder.OpenElement(4, "span");
+        __builder.AddAttribute(5, "class", "flavor-name");
+        __builder.AddContent(6, flavor.Name);
+        __builder.CloseElement();
+        __builder.OpenElement(7, "span");
+        __builder.AddAttribute(8, "class", "flavor-percent");
+        __builder.AddContent(9, $"{current}%");
+        __builder.CloseElement();
+        __builder.CloseElement();
+        __builder.OpenElement(10, "input");
+        __builder.AddAttribute(11, "type", "range");
+        __builder.AddAttribute(12, "class", "flavor-slider");
+        __builder.AddAttribute(13, "min", "0");
+        __builder.AddAttribute(14, "max", maxForSlider.ToString());
+        __builder.AddAttribute(15, "step", "5");
+        __builder.AddAttribute(16, "value", current.ToString());
+        __builder.AddAttribute(17, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => OnSliderChanged(flavor.Id, e)));
+        __builder.CloseElement();
+        __builder.CloseElement();
+    };
+
+    private int GetMaxForFlavor(string flavorId)
+    {
+        if (!selectedMixType.HasValue || allMenuItems == null)
+            return 100;
+
+        var flavor = allMenuItems.FirstOrDefault(f => f.Id == flavorId);
+        if (flavor == null)
+            return 100;
+
+        if (selectedMixType == HookahMixType.Mix)
+        {
+            var isBlonde = string.Equals(flavor.Description, HookahMixHelper.DescBlonde, StringComparison.OrdinalIgnoreCase);
+            var groupFlavors = isBlonde ? blondeFlavors : darkFlavors;
+            var groupTotal = groupFlavors.Sum(f => flavorPercentages.GetValueOrDefault(f.Id));
+            var current = flavorPercentages.GetValueOrDefault(flavorId);
+            return Math.Min(50, 50 - (groupTotal - current));
+        }
+
+        var otherTotal = totalPercent - flavorPercentages.GetValueOrDefault(flavorId);
+        return 100 - otherTotal;
+    }
+
+    private void OnSliderChanged(string flavorId, ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var value))
+            value = 0;
+
+        value = Math.Max(0, (value / 5) * 5);
+        value = Math.Min(value, GetMaxForFlavor(flavorId));
+
+        if (value == 0)
+            flavorPercentages.Remove(flavorId);
+        else
+            flavorPercentages[flavorId] = value;
+
+        validationMessage = "";
+        if (selectedMixType.HasValue && !HookahMixHelper.ValidateMix(selectedMixType.Value, flavorPercentages, allMenuItems ?? new List<MenuItem>(), out var err))
+            validationMessage = err;
+    }
+
+    private async Task AddToReservationAsync()
+    {
+        if (!selectedMixType.HasValue || pricingItem == null || string.IsNullOrWhiteSpace(reservationId))
+            return;
+
+        if (!HookahMixHelper.ValidateMix(selectedMixType.Value, flavorPercentages, allMenuItems ?? new List<MenuItem>(), out var err))
+        {
+            validationMessage = err;
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+            var mixId = Guid.NewGuid().ToString("N");
+            var mix = new HookahCustomMix
+            {
+                Id = mixId,
+                PricingMenuItemId = pricingItem.Id,
+                MixType = selectedMixType.Value,
+                DisplayName = HookahMixHelper.BuildDisplayName(flavorPercentages, allMenuItems ?? new List<MenuItem>()),
+                FlavorPercentages = new Dictionary<string, int>(flavorPercentages)
+            };
+
+            var ok = await ReservationService.AddCustomHookahToReservation(reservationId, mix);
+            if (ok)
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Custom hookah added to your reservation.");
+                Navigation.NavigateTo($"/menu?reservationId={reservationId}");
+            }
+            else
+            {
+                validationMessage = "Could not add custom hookah to reservation.";
+            }
+        }
+        catch (Exception ex)
+        {
+            validationMessage = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void GoBack()
+    {
+        if (!string.IsNullOrWhiteSpace(reservationId))
+            Navigation.NavigateTo($"/menu?reservationId={reservationId}");
+        else
+            Navigation.NavigateTo("/menu");
+    }
+
+    private static string GetMixTypeLabel(HookahMixType type) => type switch
+    {
+        HookahMixType.Adalya => "Adalya",
+        HookahMixType.Blonde => "Blonde",
+        HookahMixType.Dark => "Dark",
+        HookahMixType.Mix => "Blonde + Dark Mix",
+        _ => type.ToString()
+    };
+
+    private static string GetRequiredDescription(HookahMixType type) => type switch
+    {
+        HookahMixType.Adalya => HookahMixHelper.DescAdalya,
+        HookahMixType.Blonde => HookahMixHelper.DescBlonde,
+        HookahMixType.Dark => HookahMixHelper.DescDark,
+        HookahMixType.Mix => "Blonde or Dark",
+        _ => string.Empty
+    };
+
+    private static string GetPricingName(HookahMixType type) => type switch
+    {
+        HookahMixType.Adalya => HookahMixHelper.PricingAdalya,
+        HookahMixType.Blonde => HookahMixHelper.PricingBlonde,
+        HookahMixType.Dark => HookahMixHelper.PricingDark,
+        HookahMixType.Mix => HookahMixHelper.PricingMix,
+        _ => string.Empty
+    };
+}

@@ -79,34 +79,47 @@ else
                     <input type="number"
                            class="form-input"
                            @bind="numberOfGuests"
-                           min="1" max="8" />
+                           min="1"
+                           max="@SelectedTableCapacity" />
                 </div>
             </div>
 
-            <!-- Tables Grid -->
-            <h3>Available Tables for @selectedDate.ToString("MMMM dd, yyyy")</h3>
-            <div class="tables-grid">
-                @foreach (var table in tables)
+            <!-- Table areas -->
+            <h3>Choose your area for @selectedDate.ToString("MMMM dd, yyyy")</h3>
+            <div class="venue-areas">
+                @foreach (var area in tableAreas)
                 {
-                    var isAvailable = IsTableAvailable(table);
-                    <div class="table-card @(selectedTable == table.TableNumber ? "selected" : "") @(isAvailable ? "available" : "unavailable")"
-                         @onclick="() => SelectTable(table.TableNumber)">
-                        <div class="table-number">Table @table.TableNumber</div>
-                        <div class="table-info">
-                            <div>👥 Capacity: @table.Capacity</div>
-                            <div>📍 @table.Location</div>
-                            <div class="table-status">
-                                @if (isAvailable)
-                                {
-                                    <span class="status-badge available">Available</span>
-                                }
-                                else
-                                {
-                                    <span class="status-badge unavailable">Booked</span>
-                                }
-                            </div>
+                    <section class="venue-area">
+                        <h4 class="venue-area-title">@area.Name</h4>
+                        <div class="table-layout @area.LayoutClass">
+                            @foreach (var table in area.Tables)
+                            {
+                                var isAvailable = IsTableAvailable(table);
+                                <div class="@GetTableCardClasses(table, isAvailable)"
+                                     style="@GetTableSlotStyle(table)"
+                                     @onclick="() => SelectTable(table.TableNumber)">
+                                    <div class="table-number">Table @table.TableNumber</div>
+                                    <div class="table-info">
+                                        <div>👥 @table.Capacity seats</div>
+                                        @if (!string.IsNullOrWhiteSpace(table.Highlight))
+                                        {
+                                            <div class="table-highlight">🎬 @table.Highlight</div>
+                                        }
+                                        <div class="table-status">
+                                            @if (isAvailable)
+                                            {
+                                                <span class="status-badge available">Available</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="status-badge unavailable">Booked</span>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
                         </div>
-                    </div>
+                    </section>
                 }
             </div>
 
@@ -114,7 +127,7 @@ else
             @if (selectedTable > 0)
             {
                 <div class="time-selection">
-                    <h3>Select Time for Table @selectedTable</h3>
+                    <h3>Select Time — @GetSelectedTableLabel()</h3>
                     <div class="time-slots">
                         @foreach (var slot in timeSlots)
                         {
@@ -146,7 +159,8 @@ else
                 <div class="reservation-summary">
                     <h3>Reservation Summary</h3>
                     <div class="summary-details">
-                        <p><strong>Table:</strong> @selectedTable</p>
+                        <p><strong>Area:</strong> @GetSelectedTableArea()</p>
+                        <p><strong>Table:</strong> @selectedTable (@SelectedTableCapacity seats)</p>
                         <p><strong>Date:</strong> @selectedDate.ToString("MMMM dd, yyyy")</p>
                         <p><strong>Time:</strong> @selectedStartTime.ToString(@"hh\:mm") - @selectedEndTime.ToString(@"hh\:mm")</p>
                         <p><strong>Guests:</strong> @numberOfGuests</p>
@@ -162,24 +176,28 @@ else
             }
         </div>
 
-        <!-- My Reservations -->
+        <!-- Reservations List: shows personal reservations to users, all reservations to admins -->
         <div class="my-reservations">
-            <h2>My Reservations</h2>
-            @if (userReservations.Count == 0)
+            <h2>@(isAdmin ? "All Reservations" : "My Reservations")</h2>
+            @if ((isAdmin ? allReservations : userReservations).Count == 0)
             {
-                <p class="no-reservations">You don't have any reservations yet.</p>
+                <p class="no-reservations">No reservations found.</p>
             }
             else
             {
                 <div class="reservations-list">
-                    @foreach (var reservation in userReservations)
+                    @foreach (var reservation in (isAdmin ? allReservations : userReservations))
                     {
                         <div class="reservation-item @reservation.Status.ToString().ToLower()">
                             <div class="reservation-header">
-                                <span class="reservation-table">Table @reservation.TableNumber</span>
+                                <span class="reservation-table">@GetTableLabel(reservation.TableNumber)</span>
                                 <span class="reservation-status @reservation.Status.ToString().ToLower()">
                                     @reservation.Status
                                 </span>
+                                @if (isAdmin)
+                                {
+                                    <span class="reservation-user"> — @reservation.UserName (@reservation.UserId)</span>
+                                }
                             </div>
                             <div class="reservation-details">
                                 <p>📅 @reservation.ReservationDate.ToString("MMMM dd, yyyy")</p>
@@ -199,18 +217,34 @@ else
                                             {
                                                 var menuItemId = mi.Key;
                                                 var qty = mi.Value;
-                                                var menuPrice = (menuItemsDict != null && menuItemsDict.TryGetValue(menuItemId, out var m) ? m.Price : 0m);
-                                                var name = (menuItemsDict != null && menuItemsDict.TryGetValue(menuItemId, out var m2) ? m2.Name : menuItemId);
+                                                var isCustomHookah = reservation.HookahMixes != null && reservation.HookahMixes.ContainsKey(menuItemId);
+                                                var name = GetMenuLineName(reservation, menuItemId, qty);
+                                                var menuPrice = GetMenuUnitPrice(reservation, menuItemId);
                                                 var subtotal = menuPrice * qty;
                                                 <li class="reservation-menu-item">
                                                     <div class="menu-item-row">
                                                         <span class="menu-name">@name</span>
-                                                        <span class="menu-price">@menuPrice.ToString("C")</span>
-                                                        <div class="qty-stepper">
-                                                            <button class="stepper-btn" @onclick="() => ChangeMenuQuantity(reservation, menuItemId, -1)" disabled="@(isLoading)">-</button>
-                                                            <span class="qty">@qty</span>
-                                                            <button class="stepper-btn" @onclick="() => ChangeMenuQuantity(reservation, menuItemId, 1)" disabled="@(isLoading)">+</button>
-                                                        </div>
+                                                        @if (!isCustomHookah)
+                                                        {
+                                                            <span class="menu-price">@menuPrice.ToString("C")</span>
+                                                            <div class="qty-stepper">
+                                                                <button class="stepper-btn" @onclick="() => ChangeMenuQuantity(reservation, menuItemId, -1)" disabled="@(isLoading)">-</button>
+                                                                <span class="qty">@qty</span>
+                                                                <button class="stepper-btn" @onclick="() => ChangeMenuQuantity(reservation, menuItemId, 1)" disabled="@(isLoading)">+</button>
+                                                            </div>
+                                                        }
+                                                        else if (reservation.HookahMixes![menuItemId].FlavorPercentages is { Count: > 0 } mixParts)
+                                                        {
+                                                            <div class="hookah-mix-breakdown">
+                                                                @foreach (var part in mixParts.OrderByDescending(p => p.Value))
+                                                                {
+                                                                    var flavorName = menuItemsDict != null && menuItemsDict.TryGetValue(part.Key, out var flavor)
+                                                                        ? flavor.Name
+                                                                        : part.Key;
+                                                                    <span class="mix-part">@flavorName @part.Value%</span>
+                                                                }
+                                                            </div>
+                                                        }
                                                         <span class="menu-subtotal">@subtotal.ToString("C")</span>
                                                     </div>
                                                 </li>
@@ -222,11 +256,25 @@ else
 
                             <div class="reservation-actions">
                                 <button class="add-menu-button" @onclick="() => NavigateToMenu(reservation.Id)">Add menu items</button>
-                                @if (reservation.Status == ReservationStatus.Confirmed && reservation.ReservationDate >= DateTime.Today)
+                                @if (!isAdmin && reservation.Status == ReservationStatus.Confirmed && reservation.ReservationDate >= DateTime.Today)
                                 {
                                     <button class="cancel-button" @onclick="() => CancelReservation(reservation.Id)">
                                         Cancel Reservation
                                     </button>
+                                }
+
+                                @if (isAdmin)
+                                {
+                                    <div class="admin-controls">
+                                        <label class="form-label">Change Status</label>
+                                        <select class="form-input no-icon admin-status-select"
+                                                value="@reservation.Status.ToString()"
+                                                @onchange="@(async e => await ChangeReservationStatus(reservation, e.Value?.ToString()))">
+                                            <option value="Confirmed">Confirmed</option>
+                                            <option value="Pending">Pending</option>
+                                            <option value="Cancelled">Cancelled</option>
+                                        </select>
+                                    </div>
                                 }
                             </div>
                         </div>
@@ -248,13 +296,12 @@ else
                     {
                         foreach (var mi in r.MenuItems)
                         {
-                            if (menuItemsDict != null && menuItemsDict.TryGetValue(mi.Key, out var m))
-                                total += m.Price * mi.Value;
+                            total += GetMenuUnitPrice(r, mi.Key) * mi.Value;
                         }
                     }
                     grandTotal += total;
                     <div class="reservation-total-item">
-                        <div>Reservation Table @r.TableNumber - @r.ReservationDate.ToString("MMMM dd, yyyy")</div>
+                        <div>Reservation @GetTableLabel(r.TableNumber) - @r.ReservationDate.ToString("MMMM dd, yyyy")</div>
                         <div>Total menu: @total.ToString("C")</div>
                     </div>
                 }
@@ -283,8 +330,11 @@ else
     private string errorMessage = "";
 
     private List<Table> tables = new();
+    private IReadOnlyList<TableAreaLayout> tableAreas = TableLayoutDefinitions.Areas;
     private List<Reservation> userReservations = new();
+    private List<Reservation> allReservations = new();
     private System.Collections.Generic.Dictionary<string, MenuItem>? menuItemsDict;
+    private bool isAdmin = false;
 
     private class TimeSlot
     {
@@ -321,10 +371,33 @@ else
 
         await LoadUserData();
         await LoadUserReservations();
+        // check admin status and load all reservations if admin
+        isAdmin = await FirebaseAuthService.IsUserAdminAsync(userId);
+        if (isAdmin)
+        {
+            allReservations = await ReservationService.GetAllReservations();
+        }
         tables = await ReservationService.GetTables();
         // preload menu items dictionary for display names
         var allMenu = await MenuService.GetMenu();
         menuItemsDict = allMenu?.ToDictionary(x => x.Id) ?? new System.Collections.Generic.Dictionary<string, MenuItem>();
+    }
+
+    private async Task ChangeReservationStatus(Reservation reservation, string? newStatus)
+    {
+        if (!isAdmin || reservation == null || string.IsNullOrWhiteSpace(newStatus))
+            return;
+
+        if (Enum.TryParse<ReservationStatus>(newStatus, out var status))
+        {
+            reservation.Status = status;
+            var updated = await ReservationService.UpdateReservation(reservation);
+            if (updated != null)
+            {
+                allReservations = await ReservationService.GetAllReservations();
+                StateHasChanged();
+            }
+        }
     }
 
     private async Task LoadUserData()
@@ -364,7 +437,55 @@ else
         selectedTable = tableNumber;
         selectedStartTime = TimeSpan.Zero;
         selectedEndTime = TimeSpan.Zero;
+
+        var capacity = TableLayoutDefinitions.FindTable(tableNumber)?.Capacity ?? 10;
+        if (numberOfGuests > capacity)
+            numberOfGuests = capacity;
     }
+
+    private int SelectedTableCapacity =>
+        TableLayoutDefinitions.FindTable(selectedTable)?.Capacity ?? 10;
+
+    private string GetSelectedTableArea() =>
+        TableLayoutDefinitions.FindTable(selectedTable)?.Area ?? "—";
+
+    private string GetSelectedTableLabel()
+    {
+        var table = TableLayoutDefinitions.FindTable(selectedTable);
+        return table == null ? $"Table {selectedTable}" : $"{table.Area} · Table {table.TableNumber}";
+    }
+
+    private string GetTableLabel(int tableNumber)
+    {
+        var table = TableLayoutDefinitions.FindTable(tableNumber);
+        return table == null ? $"Table {tableNumber}" : $"{table.Area} · Table {table.TableNumber}";
+    }
+
+    private string GetTableCardClasses(Table table, bool isAvailable)
+    {
+        var classes = new List<string> { "table-card", table.LayoutSlot };
+        if (selectedTable == table.TableNumber)
+            classes.Add("selected");
+        classes.Add(isAvailable ? "available" : "unavailable");
+        return string.Join(' ', classes);
+    }
+
+    private static string GetTableSlotStyle(Table table) => table.LayoutSlot switch
+    {
+        "terrace-tl" => "grid-area: terrace-tl;",
+        "terrace-tr" => "grid-area: terrace-tr;",
+        "terrace-bl" => "grid-area: terrace-bl;",
+        "terrace-br" => "grid-area: terrace-br;",
+        "basement-l-top-left" => "grid-area: basement-tl;",
+        "basement-l-top-right" => "grid-area: basement-tr;",
+        "basement-l-corner" => "grid-area: basement-corner;",
+        "billiard-center" => "grid-area: billiard-center;",
+        "outside-1" => "grid-area: outside-1;",
+        "outside-2" => "grid-area: outside-2;",
+        "outside-3" => "grid-area: outside-3;",
+        "outside-4" => "grid-area: outside-4;",
+        _ => string.Empty
+    };
 
     private void SelectTimeSlot(TimeSpan start, TimeSpan end)
     {
@@ -382,6 +503,9 @@ else
     {
         try
         {
+            if (reservation.HookahMixes != null && reservation.HookahMixes.ContainsKey(menuItemId))
+                return;
+
             isLoading = true;
             StateHasChanged();
 
@@ -429,6 +553,18 @@ else
         }
     }
 
+    private string GetMenuLineName(Reservation reservation, string menuItemKey, int quantity)
+    {
+        var lookup = menuItemsDict ?? new Dictionary<string, MenuItem>();
+        return HookahMixHelper.GetLineDisplayName(menuItemKey, quantity, reservation, lookup);
+    }
+
+    private decimal GetMenuUnitPrice(Reservation reservation, string menuItemKey)
+    {
+        var lookup = menuItemsDict ?? new Dictionary<string, MenuItem>();
+        return HookahMixHelper.GetLinePrice(menuItemKey, 1, reservation, lookup);
+    }
+
     private bool IsTableAvailable(Table table)
     {
         return true; // For demo purposes, you can implement actual availability check
@@ -452,6 +588,9 @@ else
 
             if (string.IsNullOrWhiteSpace(userId))
                 throw new Exception("No authenticated user found.");
+
+            if (numberOfGuests > SelectedTableCapacity)
+                throw new Exception($"This table seats up to {SelectedTableCapacity} guests.");
 
             var reservation = new Reservation
             {

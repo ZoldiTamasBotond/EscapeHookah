@@ -27,5 +27,6 @@ namespace EscapeHookah.Shared.Models
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? ExpiresAt { get; set; }
         public System.Collections.Generic.Dictionary<string,int> MenuItems { get; set; } = new();
+        public System.Collections.Generic.Dictionary<string, HookahCustomMix> HookahMixes { get; set; } = new();
     }
 }

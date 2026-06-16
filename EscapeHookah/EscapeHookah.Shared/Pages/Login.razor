@@ -3,6 +3,7 @@
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 @inject IFirebaseAuthService FirebaseAuthService
+@inject System.Net.Http.HttpClient Http
 
 <PageTitle>EscapeHookah - Login</PageTitle>
 
@@ -126,6 +127,22 @@
             if (success)
             {
                 // Note: The token is automatically set inside LoginUser method
+                // ensure user profile exists in realtime database
+                try
+                {
+                    // Use absolute URI to avoid HttpClient without BaseAddress in this host
+                    var ensureUri = Navigation.ToAbsoluteUri("/api/userprofile/ensure");
+                    var resp = await Http.PostAsync(ensureUri, null);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        await JSRuntime.InvokeVoidAsync("console.warn", "User profile ensure returned " + resp.StatusCode);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await JSRuntime.InvokeVoidAsync("console.warn", "Could not ensure user profile: " + ex.Message);
+                }
+
                 await JSRuntime.InvokeVoidAsync("alert", $"Welcome back! You're now signed in.");
                 Navigation.NavigateTo("/");
             }

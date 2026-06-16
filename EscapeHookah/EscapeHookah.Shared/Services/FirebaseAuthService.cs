@@ -56,22 +56,8 @@ namespace EscapeHookah.Shared.Services
                 Debug.WriteLine("✅ Firebase Auth Client Created with Email/Password provider");
 
                 // Initialize Firebase Realtime Database with auth token factory
-                _databaseClient = new FirebaseClient(
-                    FirebaseDatabaseUrl,
-                    new FirebaseOptions
-                    {
-                        AuthTokenAsyncFactory = async () =>
-                        {
-                            var token = await GetIdTokenAsync();
-
-                            if (string.IsNullOrWhiteSpace(token))
-                            {
-                                Debug.WriteLine("⚠️ Database auth token is empty (unauthenticated request)");
-                            }
-
-                            return token;
-                        }
-                    });
+                // Defer creating the FirebaseClient until an operation requires it to avoid token timing issues
+                _databaseClient = null;
                 Debug.WriteLine("✅ Firebase Database Client Created");
 
                 Debug.WriteLine($"✅ Firebase Available: {_authClient != null && _databaseClient != null}");
@@ -83,6 +69,24 @@ namespace EscapeHookah.Shared.Services
             }
 
             Debug.WriteLine("========== FIREBASE INITIALIZATION END ==========");
+        }
+
+        // Lazily create FirebaseClient when needed (so token is available)
+        private async Task<bool> EnsureDatabaseClientAsync()
+        {
+            if (_databaseClient != null) return true;
+            try
+            {
+                _databaseClient = new FirebaseClient(
+                    FirebaseDatabaseUrl,
+                    new FirebaseOptions { AuthTokenAsyncFactory = async () => await GetIdTokenAsync() });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"EnsureDatabaseClientAsync error: {ex.Message}");
+                return false;
+            }
         }
 
         public bool IsFirebaseAvailable => _authClient != null && _databaseClient != null;
@@ -165,6 +169,113 @@ namespace EscapeHookah.Shared.Services
             {
                 Debug.WriteLine($"❌ Token refresh failed: {ex.Message}");
                 return _idToken;
+            }
+        }
+
+        // Admin helpers
+        public async Task<bool> IsUserAdminAsync(string userId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(userId))
+                    return false;
+
+                if (!await EnsureDatabaseClientAsync())
+                    return false;
+
+                var userData = await _databaseClient
+                    .Child("users")
+                    .Child(userId)
+                    .OnceSingleAsync<Dictionary<string, object>>();
+
+                if (userData == null)
+                    return false;
+
+                if (userData.TryGetValue("Role", out var roleObj) && roleObj != null)
+                {
+                    return roleObj.ToString() == "Admin";
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"IsUserAdminAsync error: {ex.Message}");
+                return false;
+            }
+        }
+
+        public async Task<bool> PromoteUserToAdmin(string userId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(userId))
+                    return false;
+
+                if (!await EnsureDatabaseClientAsync())
+                    return false;
+
+                var userData = await _databaseClient
+                    .Child("users")
+                    .Child(userId)
+                    .OnceSingleAsync<Dictionary<string, object>>();
+
+                if (userData == null)
+                    return false;
+
+                userData["Role"] = "Admin";
+
+                await _databaseClient.Child("users").Child(userId).PutAsync(userData);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"PromoteUserToAdmin error: {ex.Message}");
+                return false;
+            }
+        }
+
+        public async Task<bool> CreateAdminUser(string email, string password, string firstName, string lastName, string username, string phoneNumber)
+        {
+            Debug.WriteLine($"CreateAdminUser called for {email}");
+            try
+            {
+                // Ensure database client is available before creating profile
+                if (!await EnsureDatabaseClientAsync())
+                    return false;
+
+                var userCredential = await _authClient!.CreateUserWithEmailAndPasswordAsync(email, password);
+                var newUser = userCredential.User;
+                if (newUser == null)
+                    return false;
+
+                var uid = newUser.Uid;
+
+                var userData = new Dictionary<string, object>
+                {
+                    { "FirstName", firstName },
+                    { "LastName", lastName },
+                    { "UserName", username },
+                    { "EMail", email },
+                    { "PhoneNumber", phoneNumber },
+                    { "Role", "Admin" },
+                    { "Rate", 0 },
+                    { "ReservationsID", new List<string>() },
+                    { "CreatedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
+                    { "UserId", uid }
+                };
+
+                await _databaseClient!
+                    .Child("users")
+                    .Child(uid)
+                    .PutAsync(userData);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"CreateAdminUser error: {ex.Message}");
+                return false;
             }
         }
 
@@ -366,8 +477,21 @@ namespace EscapeHookah.Shared.Services
             {
                 if (_databaseClient == null)
                 {
-                    Debug.WriteLine("❌ GetUserProfile: Database client is null");
-                    return null;
+                    // try to (re)initialize database client
+                    try
+                    {
+                        _databaseClient = new FirebaseClient(
+                            FirebaseDatabaseUrl,
+                            new FirebaseOptions
+                            {
+                                AuthTokenAsyncFactory = async () => await GetIdTokenAsync()
+                            });
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"❌ GetUserProfile: Could not init DB client: {ex.Message}");
+                        return null;
+                    }
                 }
 
                 if (string.IsNullOrEmpty(userId))

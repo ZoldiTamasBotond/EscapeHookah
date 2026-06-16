@@ -6,14 +6,59 @@
 @inject IReservationService ReservationService
 @inject IJSRuntime JSRuntime
 @inject NavigationManager Navigation
+@inject IFirebaseAuthService FirebaseAuthService
 
 <PageTitle>EscapeHookah - Menu</PageTitle>
 
+<link rel="stylesheet" href="app.css" />
+
 <div class="menu-container">
-    <h1>Menu</h1>
+    <div class="menu-header">
+        <h1>Menu</h1>
+        <p>Browse our selection of drinks, shisha, and food</p>
+    </div>
+
+    @if (isAdmin)
+    {
+        <div class="admin-panel admin-menu-controls">
+            <h2>@(isEditing ? "Edit Menu Item" : "Add Menu Item")</h2>
+            <div class="admin-form-grid">
+                <div class="form-group">
+                    <label class="form-label" for="menuName">Name</label>
+                    <input id="menuName" class="form-input no-icon" placeholder="Item name" @bind="adminItem.Name" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="menuCategory">Category</label>
+                    <input id="menuCategory" class="form-input no-icon" placeholder="e.g. Drinks, Shisha, Food" @bind="adminItem.Category" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="menuPrice">Price</label>
+                    <input id="menuPrice" class="form-input no-icon" type="number" step="0.01" min="0" placeholder="0.00" @bind="adminPrice" />
+                </div>
+                <div class="form-group admin-form-full">
+                    <label class="form-label" for="menuDescription">Description</label>
+                    <textarea id="menuDescription" class="form-input no-icon" rows="2" placeholder="Short description" @bind="adminItem.Description"></textarea>
+                </div>
+            </div>
+            <div class="admin-form-actions">
+                <button class="admin-button" @onclick="AddOrUpdateItem">@(isEditing ? "Save Changes" : "Add Item")</button>
+                @if (isEditing)
+                {
+                    <button class="admin-button admin-button-danger" @onclick="DeleteItem">Delete Item</button>
+                }
+                <button class="admin-button admin-button-secondary" @onclick="NewItem">Clear Form</button>
+            </div>
+        </div>
+    }
 
     @if (!string.IsNullOrWhiteSpace(reservationId))
     {
+        <div class="menu-customize-banner">
+            <button class="confirm-button" @onclick="NavigateToCustomize">
+                Customise your Hookah
+            </button>
+        </div>
+
         <div class="reservation-context">
             @if (currentReservation != null)
             {
@@ -25,7 +70,7 @@
                         <ul>
                             @foreach (var mi in currentReservation.MenuItems)
                             {
-                                <li>@(menuItems?.FirstOrDefault(x => x.Id == mi.Key)?.Name ?? mi.Key) x @mi.Value</li>
+                                <li>@GetMenuLineLabel(mi.Key, mi.Value)</li>
                             }
                         </ul>
                     }
@@ -45,22 +90,44 @@
         }
         else
         {
-            @foreach (var item in menuItems)
+            @foreach (var group in GetMenuItemsByCategory())
             {
-                <div class="menu-item">
-                    <div class="menu-info">
-                        <h3>@item.Name <span class="price">@item.Price.ToString("C")</span></h3>
-                        <p class="desc">@item.Description</p>
-                    </div>
-                    <div class="menu-actions">
-                        @if (!string.IsNullOrWhiteSpace(reservationId))
+                <section class="menu-category-section">
+                    <h2 class="menu-category-title">@group.Category</h2>
+                    <div class="menu-category-items">
+                        @foreach (var item in group.Items)
                         {
-                            <button @onclick="() => AddToReservationAsync(item.Id)" disabled="@(isProcessing && currentAddId == item.Id)">
-                                @(isProcessing && currentAddId == item.Id ? "Adding..." : "Add to Reservation")
-                            </button>
+                            <div class="menu-item">
+                                <div class="menu-info">
+                                    <h3>@item.Name <span class="price">@item.Price.ToString("C")</span></h3>
+                                    <p class="desc">@item.Description</p>
+                                </div>
+                                <div class="menu-actions">
+                                    @if (!string.IsNullOrWhiteSpace(reservationId))
+                                    {
+                                        @if (HookahMixHelper.IsHookahPricingItem(item))
+                                        {
+                                            <button class="confirm-button" @onclick="() => NavigateToCustomizeForItem(item)">
+                                                Customise
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button @onclick="() => AddToReservationAsync(item.Id)" disabled="@(isProcessing && currentAddId == item.Id)">
+                                                @(isProcessing && currentAddId == item.Id ? "Adding..." : "Add to Reservation")
+                                            </button>
+                                        }
+                                    }
+                                    @if (isAdmin)
+                                    {
+                                        <button class="admin-button admin-button-small" @onclick="() => EditItem(item)">Edit</button>
+                                        <button class="admin-button admin-button-small admin-button-danger" @onclick="() => DeleteExistingItem(item.Id)">Delete</button>
+                                    }
+                                </div>
+                            </div>
                         }
                     </div>
-                </div>
+                </section>
             }
         }
     </div>
@@ -72,6 +139,10 @@
     private Reservation? currentReservation;
     private bool isProcessing = false;
     private string? currentAddId;
+    private bool isAdmin = false;
+    private bool isEditing = false;
+    private MenuItem adminItem = new MenuItem();
+    private decimal adminPrice = 0m;
 
     protected override async Task OnInitializedAsync()
     {
@@ -82,14 +153,119 @@
 
         menuItems = await MenuService.GetMenu();
 
+        // detect admin by current user profile
+        try
+        {
+            if (FirebaseAuthService != null && FirebaseAuthService.IsAuthenticated)
+            {
+                isAdmin = await FirebaseAuthService.IsUserAdminAsync(FirebaseAuthService.CurrentUserId);
+            }
+        }
+        catch { }
+
         if (!string.IsNullOrWhiteSpace(reservationId))
         {
             currentReservation = await ReservationService.GetReservationById(reservationId!);
         }
     }
 
+    private void NewItem()
+    {
+        adminItem = new MenuItem();
+        adminPrice = 0m;
+        isEditing = false;
+    }
+
+    private void EditItem(MenuItem item)
+    {
+        adminItem = new MenuItem
+        {
+            Id = item.Id,
+            Name = item.Name,
+            Description = item.Description,
+            Price = item.Price,
+            Category = item.Category
+        };
+        adminPrice = adminItem.Price;
+        isEditing = true;
+    }
+    private async Task DeleteExistingItem(string id)
+    {
+        var ok = await MenuService.DeleteMenuItem(id);
+        if (ok)
+        {
+            menuItems = await MenuService.GetMenu();
+            await JSRuntime.InvokeVoidAsync("alert", "Deleted");
+        }
+        else
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Could not delete");
+        }
+    }
+    private async Task AddOrUpdateItem()
+    {
+        try
+        {
+            var item = adminItem;
+            item.Price = adminPrice;
+            var exists = (await MenuService.GetMenu()).Any(x => x.Id == item.Id);
+            bool ok;
+            if (exists)
+                ok = await MenuService.UpdateMenuItem(item);
+            else
+                ok = await MenuService.AddMenuItem(item);
+
+            if (ok)
+            {
+                menuItems = await MenuService.GetMenu();
+                NewItem();
+                await JSRuntime.InvokeVoidAsync("alert", "Saved");
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Could not save item");
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", ex.Message);
+        }
+    }
+
+
+    private async Task DeleteItem()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(adminItem.Id))
+                return;
+
+            var ok = await MenuService.DeleteMenuItem(adminItem.Id);
+            if (ok)
+            {
+                menuItems = await MenuService.GetMenu();
+                NewItem();
+                await JSRuntime.InvokeVoidAsync("alert", "Deleted");
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Could not delete");
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", ex.Message);
+        }
+    }
     private async Task AddToReservationAsync(string itemId)
     {
+        var item = menuItems?.FirstOrDefault(x => x.Id == itemId);
+        if (item != null && HookahMixHelper.IsHookahPricingItem(item))
+        {
+            NavigateToCustomizeForItem(item);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(reservationId))
         {
             // no reservation context, redirect to /reservations with addItem param so user can choose/confirm a reservation
@@ -126,5 +302,62 @@
             currentAddId = null;
             StateHasChanged();
         }
+    }
+
+    private IEnumerable<MenuItem> GetVisibleMenuItems()
+    {
+        if (menuItems == null)
+            return Enumerable.Empty<MenuItem>();
+
+        return menuItems.Where(item => !HookahMixHelper.IsHookahFlavorItem(item));
+    }
+
+    private IEnumerable<(string Category, List<MenuItem> Items)> GetMenuItemsByCategory()
+    {
+        return GetVisibleMenuItems()
+            .GroupBy(item => string.IsNullOrWhiteSpace(item.Category) ? "Other" : item.Category.Trim())
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => (
+                Category: group.Key,
+                Items: group.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList()
+            ));
+    }
+
+    private void NavigateToCustomize()
+    {
+        if (string.IsNullOrWhiteSpace(reservationId))
+        {
+            Navigation.NavigateTo("/reservations");
+            return;
+        }
+
+        Navigation.NavigateTo($"/menu/customize?reservationId={reservationId}");
+    }
+
+    private void NavigateToCustomizeForItem(MenuItem item)
+    {
+        if (string.IsNullOrWhiteSpace(reservationId))
+        {
+            Navigation.NavigateTo("/reservations");
+            return;
+        }
+
+        var mixType = HookahMixHelper.GetMixTypeFromPricingItem(item);
+        if (mixType.HasValue)
+        {
+            Navigation.NavigateTo($"/menu/customize?reservationId={reservationId}&type={mixType}&pricingItemId={item.Id}");
+            return;
+        }
+
+        NavigateToCustomize();
+    }
+
+    private string GetMenuLineLabel(string menuItemKey, int quantity)
+    {
+        if (currentReservation == null || menuItems == null)
+            return menuItemKey;
+
+        var lookup = menuItems.ToDictionary(x => x.Id);
+        return HookahMixHelper.GetLineDisplayName(menuItemKey, quantity, currentReservation, lookup);
     }
 }

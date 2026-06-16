@@ -18,5 +18,13 @@ namespace EscapeHookah.Shared.Services
 
         // Menu items on a reservation
         Task<bool> AddMenuItemsToReservation(string reservationId, List<MenuSelection> items);
+        Task<bool> AddCustomHookahToReservation(string reservationId, HookahCustomMix mix);
+
+        // Admin: get all reservations
+        Task<List<Reservation>> GetAllReservations();
+
+        // History: past and cancelled reservations
+        Task<List<Reservation>> GetUserReservationHistory(string userId);
+        Task<List<Reservation>> GetAllReservationHistory();
     }
 }
